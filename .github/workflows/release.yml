@@ -1,0 +1,67 @@
+name: 🏷️ Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "How to increment the version."
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  release:
+    name: 🏷️ Tag release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Calculate next version
+        id: semver
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          [ -z "$LATEST" ] && LATEST="v0.0.0"
+
+          MAJOR=$(echo "$LATEST" | cut -d. -f1 | tr -d 'v')
+          MINOR=$(echo "$LATEST" | cut -d. -f2)
+          PATCH=$(echo "$LATEST" | cut -d. -f3)
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH+1)) ;;
+          esac
+
+          TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "major_tag=v${MAJOR}" >> "$GITHUB_OUTPUT"
+          echo "Next version: $TAG (floating tag: v${MAJOR})"
+
+      - name: Create immutable tag and move the floating major tag
+        env:
+          TAG: ${{ steps.semver.outputs.tag }}
+          MAJOR_TAG: ${{ steps.semver.outputs.major_tag }}
+        run: |
+          git config user.email "ci@devidence.dev"
+          git config user.name "homelab-ci"
+
+          # Immutable release tag — never moved once pushed.
+          git tag "$TAG"
+          git push origin "$TAG"
+
+          # Floating major tag (e.g. v1) — intentionally force-moved on every release, same
+          # convention as actions/checkout@v4: callers pin to this and get compatible updates
+          # without editing their `uses:` line.
+          git tag -f "$MAJOR_TAG"
+          git push origin "$MAJOR_TAG" --force

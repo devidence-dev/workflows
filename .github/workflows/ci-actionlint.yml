@@ -1,0 +1,29 @@
+name: 🔍 Lint workflows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  actionlint:
+    name: 🔍 actionlint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download actionlint
+        id: get_actionlint
+        shell: bash
+        # Pinned to the v1.7.12 release tag (not main) for both the download script itself
+        # and the actionlint version it fetches - reproducible, not "whatever is latest today".
+        run: |
+          bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+
+      - name: Check workflow and action files
+        shell: bash
+        run: ${{ steps.get_actionlint.outputs.executable }} -color
