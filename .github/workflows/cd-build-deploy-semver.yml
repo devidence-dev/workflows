@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: ""
+      inject_version_and_date_build_args:
+        description: "If true, also pass --build-arg VERSION=<tag without the leading v> and --build-arg DATE_CREATED=<build-time UTC timestamp>. These depend on the tag this workflow itself calculates, so the caller cannot precompute them into build_args like it can for e.g. a language version read from a repo file."
+        required: false
+        type: boolean
+        default: false
       values_path:
         description: "Path to the app's values.yaml inside the homelab repo."
         required: true
@@ -147,6 +152,7 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
           DOCKERFILE: ${{ inputs.dockerfile_path }}
           BUILD_ARGS: ${{ inputs.build_args }}
+          INJECT_VERSION_AND_DATE: ${{ inputs.inject_version_and_date_build_args }}
         run: |
           ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
@@ -155,6 +161,10 @@ jobs:
             while IFS= read -r line; do
               [ -n "$line" ] && ARGS+=(--build-arg "$line")
             done <<< "$BUILD_ARGS"
+          fi
+          if [ "$INJECT_VERSION_AND_DATE" = "true" ]; then
+            ARGS+=(--build-arg "VERSION=${TAG#v}")
+            ARGS+=(--build-arg "DATE_CREATED=$(date -u +'%Y-%m-%dT%H:%M:%SZ')")
           fi
 
           docker build \
