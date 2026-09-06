@@ -1,0 +1,268 @@
+name: 🔁 Reusable — Build, Push & Deploy (semver)
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: "App name, used for git tag/commit messages and as the default GHCR image name."
+        required: true
+        type: string
+      image_name:
+        description: "GHCR image name, if different from app_name (e.g. QuantWarden -> quantwarden)."
+        required: false
+        type: string
+        default: ""
+      dockerfile_path:
+        description: "Path to the Dockerfile, relative to the repo root."
+        required: false
+        type: string
+        default: "Dockerfile"
+      build_args:
+        description: "Newline-separated KEY=VALUE pairs, each passed as a --build-arg."
+        required: false
+        type: string
+        default: ""
+      values_path:
+        description: "Path to the app's values.yaml inside the homelab repo."
+        required: true
+        type: string
+      sed_anchor_repository:
+        description: "If set, anchors the tag/digest sed to this GHCR repository line (regex-escaped by the caller, e.g. 'ghcr\\.io\\/devidence-dev\\/voraz-bot') instead of a global sed — required when values.yaml has more than one repository:/tag: pair (multi-container apps, extra initContainers)."
+        required: false
+        type: string
+        default: ""
+      bump:
+        description: "patch | minor | major | rebuild (ignored when custom_tag is set)."
+        required: false
+        type: string
+        default: "patch"
+      custom_tag:
+        description: "Custom tag (e.g. v1.2.3). Overrides the automatic bump when set."
+        required: false
+        type: string
+        default: ""
+      prerelease:
+        description: "Mark as a prerelease? Ignored on a rebuild."
+        required: false
+        type: boolean
+        default: false
+      use_infisical_for_deploy_token:
+        description: "Fetch HOMELAB_DEPLOY_TOKEN from Infisical/OIDC instead of secrets.HOMELAB_DEPLOY_TOKEN (needed when the caller's environment: changes the OIDC sub claim and a native secret can't be used)."
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      HOMELAB_DEPLOY_TOKEN:
+        required: false
+
+jobs:
+  # ==========================================
+  # 🏷️ Calculate SemVer version
+  # ==========================================
+  version:
+    name: 🏷️ Calculate version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.semver.outputs.tag }}
+      is_rebuild: ${{ steps.semver.outputs.is_rebuild }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Calculate semver tag
+        id: semver
+        env:
+          CUSTOM_TAG: ${{ inputs.custom_tag }}
+          BUMP: ${{ inputs.bump }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          IS_REBUILD="false"
+
+          if [ -n "$CUSTOM_TAG" ]; then
+            TAG="$CUSTOM_TAG"
+            [[ "$TAG" == v* ]] || TAG="v$TAG"
+          else
+            LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+            [ -z "$LATEST" ] && LATEST="v0.0.0"
+
+            BUMP_TYPE="$BUMP"
+            [ -z "$BUMP_TYPE" ] && BUMP_TYPE="patch"
+
+            if [ "$BUMP_TYPE" = "rebuild" ]; then
+              # Reuse the published tag — there is no new version to calculate.
+              TAG="$LATEST"
+              IS_REBUILD="true"
+            else
+              MAJOR=$(echo "$LATEST" | cut -d. -f1 | tr -d 'v')
+              MINOR=$(echo "$LATEST" | cut -d. -f2)
+              PATCH=$(echo "$LATEST" | cut -d. -f3)
+
+              case "$BUMP_TYPE" in
+                major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+                minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+                patch) PATCH=$((PATCH+1)) ;;
+              esac
+
+              TAG="v${MAJOR}.${MINOR}.${PATCH}"
+            fi
+          fi
+
+          # A prerelease always requires a new tag, so it cannot be combined with a
+          # rebuild (which reuses the existing tag by definition) and is ignored then.
+          if [ "$PRERELEASE" = "true" ] && [ "$IS_REBUILD" != "true" ]; then
+            TAG="${TAG}-pre.$(date +%Y%m%d%H%M%S)"
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "is_rebuild=$IS_REBUILD" >> "$GITHUB_OUTPUT"
+          echo "Calculated version: $TAG (rebuild=$IS_REBUILD)"
+
+  # ==========================================
+  # 🏗️ Build and push image + create Git tag
+  # ==========================================
+  build:
+    name: 🏗️ Build & Push image
+    needs: version
+    runs-on: self-hosted
+    permissions:
+      contents: write
+      id-token: write # required so this job can request a GitHub OIDC token for Infisical
+    env:
+      IMAGE: ${{ inputs.image_name != '' && inputs.image_name || inputs.app_name }}
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fetch GHCR_TOKEN from Infisical
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        with:
+          method: "oidc"
+          identity-id: "77942652-da93-4daa-9f33-62534699496b"
+          domain: "https://app.infisical.com"
+          project-slug: "homelab-devidence"
+          env-slug: "prod"
+          secret-path: "/cross"
+          export-type: "env"
+
+      - name: Login to ghcr.io
+        run: docker login ghcr.io -u ${{ github.actor }} -p "$GHCR_TOKEN"
+
+      - name: Build image
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          DOCKERFILE: ${{ inputs.dockerfile_path }}
+          BUILD_ARGS: ${{ inputs.build_args }}
+        run: |
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+
+          ARGS=()
+          if [ -n "$BUILD_ARGS" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && ARGS+=(--build-arg "$line")
+            done <<< "$BUILD_ARGS"
+          fi
+
+          docker build \
+            "${ARGS[@]}" \
+            --platform "linux/${ARCH}" \
+            -f "$DOCKERFILE" \
+            -t "ghcr.io/devidence-dev/${IMAGE}:${TAG}" \
+            .
+
+      - name: Push to GHCR
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: docker push "ghcr.io/devidence-dev/${IMAGE}:${TAG}"
+
+      - name: Resolve pushed image digest
+        id: digest
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "ghcr.io/devidence-dev/${IMAGE}:${TAG}" | cut -d'@' -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push git tag
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          git config user.email "ci@devidence.dev"
+          git config user.name "homelab-ci"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists (expected on a rebuild), not recreating."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+  # ==========================================
+  # 🚀 Deploy to production
+  # ==========================================
+  deploy:
+    name: 🚀 Deploy to production
+    needs: [version, build]
+    runs-on: self-hosted
+    permissions:
+      contents: read
+    steps:
+      - name: Fetch HOMELAB_DEPLOY_TOKEN from Infisical
+        if: inputs.use_infisical_for_deploy_token
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        with:
+          method: "oidc"
+          identity-id: "77942652-da93-4daa-9f33-62534699496b"
+          domain: "https://app.infisical.com"
+          project-slug: "homelab-devidence"
+          env-slug: "prod"
+          secret-path: "/cross"
+          export-type: "env"
+
+      - name: Update image tag in homelab
+        env:
+          # When use_infisical_for_deploy_token is true, env.HOMELAB_DEPLOY_TOKEN was already
+          # populated by the Infisical step above via $GITHUB_ENV; otherwise fall back to the
+          # native repo secret.
+          HOMELAB_DEPLOY_TOKEN: ${{ inputs.use_infisical_for_deploy_token && env.HOMELAB_DEPLOY_TOKEN || secrets.HOMELAB_DEPLOY_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          IS_REBUILD: ${{ needs.version.outputs.is_rebuild }}
+          VALUES_PATH: ${{ inputs.values_path }}
+          APP_NAME: ${{ inputs.app_name }}
+          SED_ANCHOR: ${{ inputs.sed_anchor_repository }}
+        run: |
+          DEPLOY_DIR=$(mktemp -d)
+          trap 'rm -rf "$DEPLOY_DIR"' EXIT
+
+          git clone "https://x-access-token:${HOMELAB_DEPLOY_TOKEN}@github.com/devidence-dev/homelab.git" "$DEPLOY_DIR"
+          cd "$DEPLOY_DIR"
+
+          if [ -n "$SED_ANCHOR" ]; then
+            # Range anchor, not a line count: robust to comment blocks inserted between
+            # repository: and tag:/digest: (a real bug hit porting this to QuantWarden).
+            sed -i "/repository: ${SED_ANCHOR}/,/tag:/{s|tag: .*|tag: \"${TAG}\"|}" "$VALUES_PATH"
+            sed -i "/repository: ${SED_ANCHOR}/,/digest:/{s|digest: .*|digest: \"${DIGEST}\"|}" "$VALUES_PATH"
+          else
+            sed -i "s|tag: .*|tag: \"${TAG}\"|" "$VALUES_PATH"
+            sed -i "s|digest: .*|digest: \"${DIGEST}\"|" "$VALUES_PATH"
+          fi
+
+          git config user.email "ci@devidence.dev"
+          git config user.name "homelab-ci"
+          git add "$VALUES_PATH"
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            MSG="chore(${APP_NAME}): bump image to ${TAG}"
+            [ "$IS_REBUILD" = "true" ] && MSG="chore(${APP_NAME}): rebuild image (same tag ${TAG})"
+            git commit -m "$MSG"
+            git push
+          fi
