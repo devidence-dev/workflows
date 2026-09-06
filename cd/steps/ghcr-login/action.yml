@@ -1,0 +1,20 @@
+name: "GHCR login"
+description: "Fetches GHCR_TOKEN from Infisical (OIDC) and logs Docker into ghcr.io"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Fetch GHCR_TOKEN from Infisical
+      uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+      with:
+        method: "oidc"
+        identity-id: "77942652-da93-4daa-9f33-62534699496b"
+        domain: "https://app.infisical.com"
+        project-slug: "homelab-devidence"
+        env-slug: "prod"
+        secret-path: "/cross"
+        export-type: "env"
+
+    - name: Login to ghcr.io
+      shell: bash
+      run: docker login ghcr.io -u ${{ github.actor }} -p "$GHCR_TOKEN"
