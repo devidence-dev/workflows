@@ -46,11 +46,6 @@ on:
         required: false
         type: boolean
         default: false
-      use_infisical_for_deploy_token:
-        description: "Fetch HOMELAB_DEPLOY_TOKEN from Infisical/OIDC instead of secrets.HOMELAB_DEPLOY_TOKEN (needed when the caller's environment: changes the OIDC sub claim and a native secret can't be used)."
-        required: false
-        type: boolean
-        default: false
     secrets:
       HOMELAB_DEPLOY_TOKEN:
         required: false
@@ -202,27 +197,19 @@ jobs:
     name: 🚀 Deploy to production
     needs: [version, build]
     runs-on: self-hosted
+    # NOTE: hardcoded for now — every current caller (automation-hub) wants this gate. A job
+    # calling a reusable workflow (`uses:`) cannot itself set `environment:` (confirmed against
+    # GitHub's docs + actionlint), so this can only live here, inside the reusable workflow. When
+    # QuantWarden is ported (it must NOT run under an environment: it changes the OIDC `sub` claim
+    # and breaks its Infisical machine identity match), this needs to become two variant jobs
+    # (with/without `environment:`, gated by an input) sharing the same deploy steps.
+    environment: production
     permissions:
       contents: read
     steps:
-      - name: Fetch HOMELAB_DEPLOY_TOKEN from Infisical
-        if: inputs.use_infisical_for_deploy_token
-        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
-        with:
-          method: "oidc"
-          identity-id: "77942652-da93-4daa-9f33-62534699496b"
-          domain: "https://app.infisical.com"
-          project-slug: "homelab-devidence"
-          env-slug: "prod"
-          secret-path: "/cross"
-          export-type: "env"
-
       - name: Update image tag in homelab
         env:
-          # When use_infisical_for_deploy_token is true, env.HOMELAB_DEPLOY_TOKEN was already
-          # populated by the Infisical step above via $GITHUB_ENV; otherwise fall back to the
-          # native repo secret.
-          HOMELAB_DEPLOY_TOKEN: ${{ inputs.use_infisical_for_deploy_token && env.HOMELAB_DEPLOY_TOKEN || secrets.HOMELAB_DEPLOY_TOKEN }}
+          HOMELAB_DEPLOY_TOKEN: ${{ secrets.HOMELAB_DEPLOY_TOKEN }}
           TAG: ${{ needs.version.outputs.tag }}
           DIGEST: ${{ needs.build.outputs.digest }}
           IS_REBUILD: ${{ needs.version.outputs.is_rebuild }}
