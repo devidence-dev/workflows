@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       image_name:
-        description: "GHCR image name, if different from app_name (e.g. QuantWarden -> quantwarden)."
+        description: "GHCR image name, if different from app_name (e.g. a PascalCase repo name that publishes a lowercase image)."
         required: false
         type: string
         default: ""
@@ -27,7 +27,7 @@ on:
         required: true
         type: string
       sed_anchor_repository:
-        description: "If set, anchors the tag/digest sed to this GHCR repository line (regex-escaped by the caller, e.g. 'ghcr\\.io\\/devidence-dev\\/voraz-bot') instead of a global sed — required when values.yaml has more than one repository:/tag: pair (multi-container apps, extra initContainers)."
+        description: "If set, anchors the tag/digest sed to this GHCR repository line (regex-escaped by the caller, e.g. 'ghcr\\.io\\/devidence-dev\\/app-name') instead of a global sed — required when values.yaml has more than one repository:/tag: pair (multi-container apps, extra initContainers)."
         required: false
         type: string
         default: ""
@@ -200,7 +200,7 @@ jobs:
     # NOTE: hardcoded for now — every current caller (automation-hub) wants this gate. A job
     # calling a reusable workflow (`uses:`) cannot itself set `environment:` (confirmed against
     # GitHub's docs + actionlint), so this can only live here, inside the reusable workflow. When
-    # QuantWarden is ported (it must NOT run under an environment: it changes the OIDC `sub` claim
+    # a still-private multi-container app is ported (it must NOT run under an environment: it changes the OIDC `sub` claim
     # and breaks its Infisical machine identity match), this needs to become two variant jobs
     # (with/without `environment:`, gated by an input) sharing the same deploy steps.
     environment: production
@@ -225,7 +225,7 @@ jobs:
 
           if [ -n "$SED_ANCHOR" ]; then
             # Range anchor, not a line count: robust to comment blocks inserted between
-            # repository: and tag:/digest: (a real bug hit porting this to QuantWarden).
+            # repository: and tag:/digest: (a real bug hit porting this to a multi-container app).
             sed -i "/repository: ${SED_ANCHOR}/,/tag:/{s|tag: .*|tag: \"${TAG}\"|}" "$VALUES_PATH"
             sed -i "/repository: ${SED_ANCHOR}/,/digest:/{s|digest: .*|digest: \"${DIGEST}\"|}" "$VALUES_PATH"
           else
