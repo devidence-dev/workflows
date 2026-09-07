@@ -1,0 +1,35 @@
+name: "Go build verification"
+description: "Verifies the module builds for a given target and platform"
+
+inputs:
+  target:
+    description: "Package pattern to build"
+    required: false
+    default: "./..."
+  output:
+    description: "Output binary path. Leave empty to just verify compilation (required when target is not a single main package)."
+    required: false
+    default: ""
+  goos:
+    required: false
+    default: "linux"
+  goarch:
+    required: false
+    default: "amd64"
+
+runs:
+  using: "composite"
+  steps:
+    - name: go build
+      shell: bash
+      env:
+        GOOS: ${{ inputs.goos }}
+        GOARCH: ${{ inputs.goarch }}
+        TARGET: ${{ inputs.target }}
+        OUTPUT: ${{ inputs.output }}
+      run: |
+        if [ -n "$OUTPUT" ]; then
+          go build -v -o "$OUTPUT" "$TARGET"
+        else
+          go build -v "$TARGET"
+        fi

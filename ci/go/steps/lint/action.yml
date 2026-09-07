@@ -1,0 +1,18 @@
+name: "Go lint"
+description: "Runs golangci-lint, blocking on findings"
+
+inputs:
+  args:
+    description: "Extra arguments passed to golangci-lint"
+    required: false
+    default: "--timeout=5m --enable=errcheck,govet,staticcheck,unused,misspell,gosec"
+
+runs:
+  using: "composite"
+  steps:
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+      with:
+        version: latest
+        install-mode: goinstall
+        args: ${{ inputs.args }}

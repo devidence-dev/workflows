@@ -1,0 +1,17 @@
+name: "Go setup"
+description: "Sets up the Go toolchain with module caching"
+
+inputs:
+  go-version-file:
+    description: "Path to the file declaring the Go version (go.mod or .go-version)"
+    required: false
+    default: "go.mod"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: ${{ inputs.go-version-file }}
+        cache: true

@@ -51,12 +51,16 @@ flowchart LR
 | `.github/workflows/cd-build-deploy-semver.yml` | Reusable workflow (`workflow_call`) | version → build & push → deploy pipeline for semver-versioned apps |
 | `.github/workflows/release.yml` | Workflow (`workflow_dispatch`) | Tags a new release of *this* repo (see Versioning) |
 | `.github/workflows/ci-actionlint.yml` | Workflow (`push`/`pull_request`) | Lints every workflow file here with [`actionlint`](https://github.com/rhysd/actionlint) |
+| `.github/workflows/ci-go.yml` | Reusable workflow (`workflow_call`) | Standard Go CI: tidy-check, vet, lint, test, govulncheck, build, Sonar — one independent job each |
 | `cd/steps/ghcr-login/` | Composite action | Fetches `GHCR_TOKEN` from Infisical (OIDC) and logs Docker into `ghcr.io` |
+| `cd/steps/homelab-deploy/` | Composite action | Clones `homelab`, updates `tag`/`digest` in the app's `values.yaml`, commits+pushes if there's a real change |
+| `ci/go/steps/{setup,tidy-check,vet,lint,test,vulncheck,build}/` | Composite actions | Building blocks of `ci-go.yml` — independent and idempotent, each assumes `setup` already ran in the same job |
+| `ci/steps/sonar-scan/` | Composite action | Fetches `SONAR_TOKEN` from Infisical and runs the SonarCloud scan, blocking on the Quality Gate — language-agnostic, shared by every `ci-<lang>.yml` |
 
 > Workflow files must live flat in `.github/workflows/` — GitHub doesn't scan subdirectories there.
 > The `cd-`/`ci-` filename prefix is just a naming convention to group them; composite actions
-> (the `steps/`) don't have that restriction and live under their own area (`cd/steps/`, and later
-> `ci/<lang>/steps/` once CI pipelines are centralized too — see [Roadmap](#-roadmap-ci-phase-2)).
+> (the `steps/`) don't have that restriction and live under their own area (`cd/steps/`, `ci/go/steps/`,
+> `ci/steps/`).
 
 ## 🧩 Job graph: `cd-build-deploy-semver.yml`
 
@@ -64,24 +68,31 @@ flowchart LR
 flowchart LR
     subgraph Caller["Caller repo (e.g. automation-hub)"]
         direction TB
-        RBA["resolve-build-args<br/>(reads .go-version, etc.)"] --> DJ["deploy job<br/>uses: cd-build-deploy-semver.yml@v1"]
+        RBA["resolve-build-args<br/>(optional — only if the caller<br/>needs to precompute a build arg)"] --> DJ["deploy job<br/>uses: cd-build-deploy-semver.yml@v1"]
     end
 
     subgraph RW["cd-build-deploy-semver.yml"]
         direction LR
         V["🏷️ version<br/>(ubuntu-latest)"] -->|"tag, is_rebuild"| B["🏗️ build<br/>(self-hosted)"]
-        V -->|"tag, is_rebuild"| D["🚀 deploy<br/>(self-hosted, environment: production)"]
-        B -->|digest| D
+        V -->|"tag, is_rebuild"| D1["🚀 deploy<br/>(environment: production,<br/>secrets.HOMELAB_DEPLOY_TOKEN)"]
+        V -->|"tag, is_rebuild"| D2["🚀 deploy-no-environment<br/>(no environment,<br/>token via Infisical/OIDC)"]
+        B -->|digest| D1
+        B -->|digest| D2
     end
 
     DJ -. triggers .-> V
     B -- "🔐 ghcr-login step<br/>build & push" --> GHCR[(ghcr.io/devidence-dev/*)]
-    D -- "clone, sed tag/digest, commit" --> HL[(homelab values.yaml)]
+    D1 -- "homelab-deploy step" --> HL[(homelab values.yaml)]
+    D2 -- "homelab-deploy step" --> HL
 ```
 
-Only `version` and `build` need each other's outputs directly; `deploy` needs both (`tag`/
-`is_rebuild` to write the right values and commit message, `digest` to actually give ArgoCD
-something to sync on a `rebuild` where the tag itself doesn't change).
+Only `version` and `build` need each other's outputs directly; both `deploy` variants need both
+(`tag`/`is_rebuild` to write the right values and commit message, `digest` to actually give ArgoCD
+something to sync on a `rebuild` where the tag itself doesn't change). `deploy` and
+`deploy-no-environment` are mutually exclusive via `if: inputs.use_production_environment` — GitHub
+still lists **both** in the run graph, but the one that doesn't apply shows as `Skipped`, not
+failed. Both call the same `cd/steps/homelab-deploy` composite action, so the actual deploy logic
+isn't duplicated between them.
 
 ## 👁️ Visibility: this repo is public
 
@@ -142,39 +153,66 @@ Example of tag state over time:
    to resolve anything the reusable workflow can't compute itself (e.g. reading a `GO_VERSION` file
    for `build_args`), and one that does the actual `uses:` call, `needs:`-ing the first.
 2. Point it at `uses: devidence-dev/workflows/.github/workflows/cd-build-deploy-semver.yml@v1`.
-3. Pass secrets **explicitly** (`secrets: { HOMELAB_DEPLOY_TOKEN: ${{ secrets.HOMELAB_DEPLOY_TOKEN }} }`),
-   not `secrets: inherit` — least-privilege, and it's what SonarCloud's default ruleset expects.
+3. Decide `use_production_environment` (default `true`):
+   - `true` — deploy runs under `environment: production` and needs a `secrets: { HOMELAB_DEPLOY_TOKEN: ${{ secrets.HOMELAB_DEPLOY_TOKEN }} }`
+     block (not `secrets: inherit` — least-privilege, and it's what SonarCloud's default ruleset
+     expects). Use this only if the app's repo has a **real** `production` Environment with
+     protection rules — otherwise the gate is decorative.
+   - `false` — no environment; the token is fetched via Infisical/OIDC inside the reusable
+     workflow instead, no `secrets:` block needed on the caller at all. Use this for repos without
+     a real Environment (can't set one up without GitHub Pro on a private repo) — this org's
+     policy is to prefer Infisical over GitHub-native secrets wherever there's no real approval
+     gate to preserve, since GitHub secrets can't be viewed/audited after creation.
+   - `environment: production` is **not** settable directly on the caller job either way — GitHub
+     doesn't allow `environment:` alongside `uses:` (actionlint catches this); it lives inside the
+     reusable workflow's two `deploy`/`deploy-no-environment` job variants instead.
 4. Set `permissions: { contents: write, id-token: write }` on the caller job — a job calling a
    reusable workflow can restrict permissions but never grant more than what it itself has.
-5. `environment: production` is **not** settable on the caller job (GitHub doesn't allow
-   `environment:` alongside `uses:` — actionlint catches this). It's hardcoded inside the reusable
-   workflow's `deploy` job today, since every current caller wants it; a still-private
-   multi-container app will need this revisited when it's onboarded (it must *not* run under an
-   environment — changes the OIDC `sub` claim and breaks its Infisical machine identity match).
 
-## 🗺️ Roadmap: CI (phase 2)
+## 🧪 Go CI: `ci-go.yml`
 
-This repo currently only centralizes CD (`cd-build-deploy-semver.yml`). Each app's own `ci.yml`
-(lint/test/vuln-scan) is still per-repo, and — unlike CD — genuinely differs by language, so it'll
-need its own reusable workflow per language once centralized:
+The standard Go CI stack, adopted by `automation-hub` and another internal Go app — both
+previously ran their own divergent check sets (one had `golangci-lint` + `osv-scanner` + OWASP
+dependency-check; the other had `go mod verify`/tidy + `govulncheck`, no linter). Reconciled to
+**one** canonical set instead of per-repo toggle inputs — this repo is meant to be where the
+standard lives, not a menu of every variant that ever existed:
 
+```mermaid
+flowchart TB
+    subgraph "ci-go.yml — every job independent, runs in parallel"
+        T[🧹 tidy-check]
+        V[🔍 vet]
+        L[🧹 lint]
+        TE[🧪 test]
+        VU[🔒 vulncheck]
+        B[🏗️ build]
+        S[📊 sonar]
+    end
+    Setup(("setup<br/>(each job runs<br/>its own checkout+setup)"))
+    Setup -.-> T & V & L & TE & VU & B & S
+    TE -. "coverage.out<br/>(re-run, not shared —<br/>idempotent)" .-> S
 ```
-ci/
-  go/steps/<name>/action.yml       # e.g. setup (setup-go + cache), test, lint, vuln-scan
-  python/steps/<name>/action.yml   # e.g. setup (setup-uv), test
-  node/steps/<name>/action.yml     # devidence-home, discord-tts-bot
-  java/steps/<name>/action.yml     # LanguageTool
-  steps/sonar-scan/action.yml      # NOT per-language — the Infisical+SonarCloud block is identical
-                                    # today in every ci.yml regardless of language
-.github/workflows/
-  ci-go.yml       # workflow_call assembling checkout + ci/go/steps/* + ci/steps/sonar-scan
-  ci-python.yml   # same idea for Python
-  ...
-```
 
-**Decided ahead of building it**: `automation-hub` and another internal Go app have already
-diverged — one runs `golangci-lint` + `osv-scanner` + OWASP dependency-check + Sonar; the other
-runs `go mod verify` + a tidy check + `govulncheck` + Sonar (lighter, no golangci-lint). `ci-go.yml`
-will define **one** canonical Go check set (not per-repo toggle inputs) and both repos adopt it
-as-is — simpler to maintain, and consistent with treating this repo as the place standards live,
-not a menu of every variant that ever existed.
+- `tidy-check` — `go mod verify` + a `go mod tidy` drift check.
+- `vet` — `go vet ./...`.
+- `lint` — `golangci-lint`, **blocking** (the old `--issues-exit-code=0` that made findings
+  advisory-only was dropped — a linter that can never fail the build isn't gating anything).
+- `test` — `go test -race -coverprofile=... ./...`.
+- `vulncheck` — `govulncheck` via `go run golang.org/x/vuln/cmd/govulncheck@latest`. Replaces both
+  `osv-scanner` and OWASP dependency-check: it's the Go team's own tool, checks whether a
+  vulnerable code path is actually *reachable* from the module (not just "a vulnerable version is
+  present"), and needs no separate install step or `JAVA_HOME`.
+- `build` — cross-compile verification, configurable target/output/GOOS/GOARCH.
+- `sonar` — re-runs the `test` step for its own coverage file (idempotent — no artifact hand-off
+  needed between jobs), then `ci/steps/sonar-scan`. **Now always blocks on the Quality Gate** —
+  one of the two repos already enforced this, the other only uploaded the analysis; standardized
+  on enforcing it.
+
+Each of the seven jobs does its own `checkout` + `ci/go/steps/setup` — no job depends on another's
+output. A failure in `lint` doesn't hide whether `test` or `vulncheck` passed.
+
+## 🗺️ Roadmap: CI, other languages
+
+`ci-go.yml` is done. Still per-repo, not yet centralized: `ci-python.yml` (QuantWarden),
+`ci-node.yml` (devidence-home, discord-tts-bot), `ci-java.yml` (LanguageTool) — same shape,
+`ci/<lang>/steps/` + the already-shared `ci/steps/sonar-scan`.

@@ -1,0 +1,17 @@
+name: "Go test"
+description: "Runs the test suite with the race detector and coverage"
+
+outputs:
+  coverage_file:
+    description: "Path to the generated coverage profile"
+    value: ${{ steps.test.outputs.coverage_file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: go test
+      id: test
+      shell: bash
+      run: |
+        go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        echo "coverage_file=coverage.out" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,9 @@
+name: "Go vet"
+description: "Runs go vet across the module"
+
+runs:
+  using: "composite"
+  steps:
+    - name: go vet
+      shell: bash
+      run: go vet ./...

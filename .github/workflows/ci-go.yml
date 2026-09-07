@@ -1,0 +1,132 @@
+name: 🧪 Reusable — Go CI
+
+on:
+  workflow_call:
+    inputs:
+      go_version_file:
+        description: "Path to the file declaring the Go version (go.mod or .go-version)."
+        required: false
+        type: string
+        default: "go.mod"
+      lint_args:
+        description: "Extra arguments passed to golangci-lint."
+        required: false
+        type: string
+        default: "--timeout=5m --enable=errcheck,govet,staticcheck,unused,misspell,gosec"
+      build_target:
+        description: "Package pattern to build for the build-verification job."
+        required: false
+        type: string
+        default: "./..."
+      build_output:
+        description: "Output binary path for the build-verification job. Leave empty to just verify compilation."
+        required: false
+        type: string
+        default: ""
+      build_goos:
+        required: false
+        type: string
+        default: "linux"
+      build_goarch:
+        required: false
+        type: string
+        default: "amd64"
+
+jobs:
+  # Each job below is independent and runs in parallel — none `needs:` another. A failure in one
+  # (e.g. lint) doesn't block the others from reporting their own result.
+
+  tidy-check:
+    name: 🧹 go mod tidy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+      - uses: devidence-dev/workflows/ci/go/steps/tidy-check@v1
+
+  vet:
+    name: 🔍 go vet
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+      - uses: devidence-dev/workflows/ci/go/steps/vet@v1
+
+  lint:
+    name: 🧹 golangci-lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+      - uses: devidence-dev/workflows/ci/go/steps/lint@v1
+        with:
+          args: ${{ inputs.lint_args }}
+
+  test:
+    name: 🧪 go test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+      - uses: devidence-dev/workflows/ci/go/steps/test@v1
+
+  vulncheck:
+    name: 🔒 govulncheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+      - uses: devidence-dev/workflows/ci/go/steps/vulncheck@v1
+
+  build:
+    name: 🏗️ Build verification
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+      - uses: devidence-dev/workflows/ci/go/steps/build@v1
+        with:
+          target: ${{ inputs.build_target }}
+          output: ${{ inputs.build_output }}
+          goos: ${{ inputs.build_goos }}
+          goarch: ${{ inputs.build_goarch }}
+
+  sonar:
+    name: 📊 SonarCloud
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required to request an OIDC token for Infisical
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history; otherwise Sonar warns about a shallow clone
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+      - uses: devidence-dev/workflows/ci/go/steps/test@v1
+      - uses: devidence-dev/workflows/ci/steps/sonar-scan@v1

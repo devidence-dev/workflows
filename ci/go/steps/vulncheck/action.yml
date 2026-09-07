@@ -1,0 +1,9 @@
+name: "Go vulnerability check"
+description: "Runs govulncheck — flags only vulnerabilities actually reachable from the module's own code"
+
+runs:
+  using: "composite"
+  steps:
+    - name: govulncheck
+      shell: bash
+      run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

@@ -1,0 +1,27 @@
+name: "SonarCloud scan"
+description: "Fetches SONAR_TOKEN from Infisical and runs the SonarCloud scan, blocking on the Quality Gate. Language-agnostic — the caller must produce whatever coverage file sonar-project.properties expects before calling this."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Fetch SONAR_TOKEN from Infisical
+      uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+      with:
+        method: "oidc"
+        identity-id: "77942652-da93-4daa-9f33-62534699496b"
+        domain: "https://app.infisical.com"
+        project-slug: "homelab-devidence"
+        env-slug: "prod"
+        secret-path: "/cross"
+        export-type: "env"
+
+    - name: SonarCloud Scan
+      uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+      env:
+        SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+      with:
+        # Without this, the scan action only uploads the analysis and always exits 0 — it never
+        # checks the Quality Gate result. A gate that can't fail the build is purely cosmetic.
+        args: >
+          -Dsonar.qualitygate.wait=true
+          -Dsonar.qualitygate.timeout=300
