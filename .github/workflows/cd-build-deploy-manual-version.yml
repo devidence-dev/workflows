@@ -27,7 +27,7 @@ on:
         type: string
         default: ""
       build_args:
-        description: "Newline-separated KEY=VALUE pairs, each passed as a --build-arg. Since `version` is already a plain caller input (not calculated by this workflow), the caller can safely reference it here directly, e.g. 'LT_VERSION=${{ inputs.lt_version }}'."
+        description: "Newline-separated KEY=VALUE pairs, each passed as a --build-arg. Since `version` is already a plain caller input (not calculated by this workflow), the caller can safely reference its own version input here directly, e.g. LT_VERSION set to the caller's own version input."
         required: false
         type: string
         default: ""
