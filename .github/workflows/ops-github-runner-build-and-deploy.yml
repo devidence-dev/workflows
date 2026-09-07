@@ -79,6 +79,10 @@ jobs:
           GIT_ASKPASS_SCRIPT=$(mktemp /tmp/homelab-runner-askpass.XXXXXX)
           cleanup() { rm -rf "$DEPLOY_DIR" "$GIT_ASKPASS_SCRIPT"; }
           trap cleanup EXIT
+          # The $1/$HOMELAB_DEPLOY_TOKEN below are intentionally unexpanded here — they're
+          # written literally into the generated script and only expand when GIT_ASKPASS
+          # invokes it later.
+          # shellcheck disable=SC2016
           printf '%s\n' \
             '#!/bin/sh' \
             'case "$1" in' \

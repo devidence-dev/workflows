@@ -56,10 +56,12 @@ jobs:
           IMAGES_REMOVED=$(echo "$OUTPUT" | grep -ci "^deleted:" || true)
           [ -z "$IMAGES_REMOVED" ] && IMAGES_REMOVED="0"
 
-          echo "reclaimed=$RECLAIMED" >> "$GITHUB_OUTPUT"
-          echo "images_removed=$IMAGES_REMOVED" >> "$GITHUB_OUTPUT"
-          echo "before=$BEFORE_LIST" >> "$GITHUB_OUTPUT"
-          echo "after=$AFTER_LIST" >> "$GITHUB_OUTPUT"
+          {
+            echo "reclaimed=$RECLAIMED"
+            echo "images_removed=$IMAGES_REMOVED"
+            echo "before=$BEFORE_LIST"
+            echo "after=$AFTER_LIST"
+          } >> "$GITHUB_OUTPUT"
 
       - name: 📦 Download crictl
         run: |
@@ -106,10 +108,12 @@ jobs:
             FREED_HUMAN="${FREED_BYTES}B"
           fi
 
-          echo "removed=$REMOVED" >> "$GITHUB_OUTPUT"
-          echo "before=$BEFORE_LIST" >> "$GITHUB_OUTPUT"
-          echo "after=$AFTER_LIST" >> "$GITHUB_OUTPUT"
-          echo "reclaimed=$FREED_HUMAN" >> "$GITHUB_OUTPUT"
+          {
+            echo "removed=$REMOVED"
+            echo "before=$BEFORE_LIST"
+            echo "after=$AFTER_LIST"
+            echo "reclaimed=$FREED_HUMAN"
+          } >> "$GITHUB_OUTPUT"
 
       - name: 📱 Notify Telegram
         if: always()

@@ -176,7 +176,7 @@ jobs:
               echo ""
               echo "🔧 DEBUG MODE - Full JSON:"
               echo "============================="
-              cat scan-results.json | jq '.' 2>/dev/null || cat scan-results.json
+              jq '.' scan-results.json 2>/dev/null || cat scan-results.json
             fi
 
           else
