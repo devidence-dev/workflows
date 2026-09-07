@@ -1,0 +1,187 @@
+name: 🔍 Check Docker Updates & Notify (github-runner)
+
+# Special case, kept as a plain workflow (not workflow_call): host maintenance for the
+# self-hosted runner box, not a template other repos invoke. Lives here for organization
+# alongside the other host-ops workflows.
+
+on:
+  schedule:
+    # Fires every day at 13:15 UTC (~8:15 AM GMT-5) — the should-run job below gates actual
+    # execution to every 2 days. Daily-cron + modulo-gate on purpose, instead of the previous
+    # '0 13 */2 * *': that pattern resets at every month boundary (day-of-month */N wraps to day
+    # 1), so it would sometimes fire two days in a row. A fixed non-top-of-hour minute also avoids
+    # GitHub's documented scheduler congestion at :00, which is what was pushing real runs into
+    # the afternoon/evening instead of the morning.
+    - cron: '15 13 * * *'
+  workflow_dispatch:
+    inputs:
+      force_check:
+        description: "🔄 Force full check"
+        required: false
+        type: boolean
+        default: false
+      debug_mode:
+        description: "🔧 Debug mode (more information)"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  should-run:
+    name: 🗓️ Every-2-days gate
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    steps:
+      - id: gate
+        run: |
+          DAYS_SINCE_EPOCH=$(( $(date -u +%s) / 86400 ))
+          if [ $(( DAYS_SINCE_EPOCH % 2 )) -eq 0 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  check-updates:
+    needs: should-run
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.should-run.outputs.run == 'true')
+    runs-on: self-hosted
+    permissions:
+      packages: read
+
+    steps:
+      - name: 📦 Download Docker Image Reporter
+        run: |
+          set -euo pipefail
+          ICR_VERSION="v0.9.3"
+          ARCH=$(uname -m)
+          echo "🖥️ Detected architecture: $ARCH"
+
+          case $ARCH in
+            "aarch64"|"arm64") BINARY_ARCH="arm64" ;;
+            "x86_64"|"amd64") BINARY_ARCH="amd64" ;;
+            *) echo "⚠️ Unrecognized architecture"; exit 1 ;;
+          esac
+
+          echo "📥 Downloading to /tmp (avoiding noexec restriction)..."
+          BASE_URL="https://github.com/devidence-dev/image-container-reporter/releases/download/${ICR_VERSION}"
+          curl -fsSL --retry 3 -o /tmp/icr \
+            "${BASE_URL}/icr-linux-${BINARY_ARCH}"
+          curl -fsSL --retry 3 -o /tmp/icr.sha256 \
+            "${BASE_URL}/icr-linux-${BINARY_ARCH}.sha256"
+          EXPECTED_SHA256=$(awk '{print $1}' /tmp/icr.sha256)
+          printf '%s  %s\n' "$EXPECTED_SHA256" /tmp/icr | sha256sum -c -
+
+          chmod +x /tmp/icr
+
+          echo "🔍 Verifying:"
+          file /tmp/icr
+
+          if /tmp/icr --version; then
+            echo "✅ Scanner ready at /tmp/icr"
+          else
+            echo "❌ Error running scanner"
+            exit 1
+          fi
+
+      - name: 🔍 Scan running Kubernetes pods for updates
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TELEGRAM_BOT_TOKEN}" ] && [ -n "${TELEGRAM_CHAT_ID}" ]; then
+            echo "📱 Configuring Telegram..."
+            /tmp/icr config set telegram.bot_token "${TELEGRAM_BOT_TOKEN}"
+            /tmp/icr config set telegram.chat_id "${TELEGRAM_CHAT_ID}"
+            /tmp/icr config set telegram.enabled true
+          fi
+
+          if [ -n "${GITHUB_TOKEN}" ]; then
+            echo "🔑 Configuring GitHub token for GHCR..."
+            /tmp/icr config set registry.ghcr.token "${GITHUB_TOKEN}"
+          fi
+
+          echo "🔍 Starting pod scan on Kubernetes..."
+          if [ -n "${TELEGRAM_BOT_TOKEN}" ]; then
+            /tmp/icr scan \
+              --kubernetes \
+              --notify \
+              --output json \
+              --output-file /tmp/scan-results.json \
+              --extra-images-file /opt/runner/extra-images.yml
+          else
+            /tmp/icr scan \
+              --kubernetes \
+              --output json \
+              --output-file /tmp/scan-results.json \
+              --extra-images-file /opt/runner/extra-images.yml
+          fi
+
+          cp /tmp/scan-results.json ./scan-results.json
+          chmod 644 ./scan-results.json
+
+          echo "✅ Scan completed"
+
+      - name: 📊 Show detailed scan summary
+        run: |
+          if [ -f "scan-results.json" ]; then
+            echo "📋 Detailed container scan summary:"
+            echo "========================================"
+
+            if command -v jq >/dev/null 2>&1; then
+              echo "🔍 JSON structure:"
+              jq 'keys' scan-results.json 2>/dev/null || echo "Error reading JSON keys"
+
+              UPDATES_COUNT=$(jq -r 'if has("updates_available") then .updates_available | length else 0 end' scan-results.json 2>/dev/null || echo '0')
+              UP_TO_DATE_COUNT=$(jq -r 'if has("up_to_date_services") then .up_to_date_services | length elif has("up_to_date") then .up_to_date | length else 0 end' scan-results.json 2>/dev/null || echo '0')
+              TOTAL_CONTAINERS=$(jq -r 'if has("total_services_found") then .total_services_found elif has("services_scanned") then .services_scanned else 0 end' scan-results.json 2>/dev/null || echo '0')
+              ERRORS_COUNT=$(jq -r 'if has("errors") then .errors | length else 0 end' scan-results.json 2>/dev/null || echo '0')
+
+              echo "🔄 Updates found: $UPDATES_COUNT"
+              echo "✅ Up-to-date containers: $UP_TO_DATE_COUNT"
+              echo "🐳 Total containers scanned: $TOTAL_CONTAINERS"
+              echo "❌ Errors found: $ERRORS_COUNT"
+              echo ""
+
+              if [ "$UPDATES_COUNT" -gt 0 ]; then
+                echo "🔄 UPDATES AVAILABLE:"
+                echo "------------------------------"
+                jq -r '.updates_available[] | "  📦 \(.service_name): \(.current_image.tag) → \(.latest_image.tag) (\(.update_type))"' scan-results.json 2>/dev/null || echo "Error processing updates"
+                echo ""
+              fi
+
+              if [ "$UP_TO_DATE_COUNT" -gt 0 ]; then
+                echo "✅ UP-TO-DATE SERVICES:"
+                echo "-------------------------"
+                jq -r '.up_to_date_services[] | "  ✓ \(.)"' scan-results.json 2>/dev/null || echo "Error processing up-to-date services"
+                echo ""
+              fi
+
+              if [ "$ERRORS_COUNT" -gt 0 ]; then
+                echo "❌ ERRORS FOUND:"
+                echo "----------------------"
+                jq -r '.errors[] | "  ⚠️ \(.)"' scan-results.json 2>/dev/null || echo "Error processing errors"
+                echo ""
+              fi
+
+            else
+              echo "⚠️ jq not available - showing raw JSON content:"
+              cat scan-results.json
+            fi
+
+            if [ "${{ github.event.inputs.debug_mode }}" = "true" ]; then
+              echo ""
+              echo "🔧 DEBUG MODE - Full JSON:"
+              echo "============================="
+              cat scan-results.json | jq '.' 2>/dev/null || cat scan-results.json
+            fi
+
+          else
+            echo "❌ scan-results.json file not found"
+            echo "📂 Files in current directory:"
+            ls -la
+            exit 1
+          fi

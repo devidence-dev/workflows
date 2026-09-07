@@ -1,0 +1,152 @@
+name: 🧹 Cleanup unused images (github-runner)
+
+# Special case, kept as a plain workflow (not workflow_call): host maintenance for the
+# self-hosted runner box, not a template other repos invoke. Lives here for organization
+# alongside the other host-ops workflows.
+
+on:
+  schedule:
+    # Fires every day at 13:45 UTC (~8:45 AM GMT-5) — the should-run job below gates actual
+    # execution to every 3 days. Same daily-cron + modulo-gate reasoning as
+    # ops-github-runner-check-updates.yml: '0 8 */3 * *' wraps at month boundaries (day-of-month
+    # */N resets to day 1), and a top-of-the-hour minute is the most congested slot in GitHub's
+    # scheduler — both were why this used to land at random times instead of the morning.
+    # Offset 30 minutes after check-updates so the two never queue on the same self-hosted runner.
+    - cron: '45 13 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: github-runner-host-operations
+  cancel-in-progress: false
+
+jobs:
+  should-run:
+    name: 🗓️ Every-3-days gate
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    steps:
+      - id: gate
+        run: |
+          DAYS_SINCE_EPOCH=$(( $(date -u +%s) / 86400 ))
+          if [ $(( DAYS_SINCE_EPOCH % 3 )) -eq 0 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  cleanup:
+    name: 🧹 Prune Docker & containerd images
+    needs: should-run
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.should-run.outputs.run == 'true')
+    runs-on: self-hosted
+    steps:
+      - name: 🐳 Prune Docker images
+        id: docker
+        run: |
+          set -euo pipefail
+          BEFORE_LIST=$(docker images -q 2>/dev/null | wc -l || echo "0")
+
+          OUTPUT=$(docker system prune -af 2>&1)
+
+          AFTER_LIST=$(docker images -q 2>/dev/null | wc -l || echo "0")
+          RECLAIMED=$(echo "$OUTPUT" | grep -i "Total reclaimed space" | sed 's/.*: //')
+          [ -z "$RECLAIMED" ] && RECLAIMED="0B"
+          IMAGES_REMOVED=$(echo "$OUTPUT" | grep -ci "^deleted:" || true)
+          [ -z "$IMAGES_REMOVED" ] && IMAGES_REMOVED="0"
+
+          echo "reclaimed=$RECLAIMED" >> "$GITHUB_OUTPUT"
+          echo "images_removed=$IMAGES_REMOVED" >> "$GITHUB_OUTPUT"
+          echo "before=$BEFORE_LIST" >> "$GITHUB_OUTPUT"
+          echo "after=$AFTER_LIST" >> "$GITHUB_OUTPUT"
+
+      - name: 📦 Download crictl
+        run: |
+          set -euo pipefail
+          CRICTL_VERSION="v1.32.0"
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+          BASE_URL="https://github.com/kubernetes-sigs/cri-tools/releases/download/${CRICTL_VERSION}"
+          ARCHIVE="crictl-${CRICTL_VERSION}-linux-${ARCH}.tar.gz"
+          curl -fsSL -o /tmp/crictl.tar.gz "${BASE_URL}/${ARCHIVE}"
+          curl -fsSL -o /tmp/crictl.tar.gz.sha256 "${BASE_URL}/${ARCHIVE}.sha256"
+          EXPECTED_SHA256=$(awk '{print $1}' /tmp/crictl.tar.gz.sha256)
+          printf '%s  %s\n' "$EXPECTED_SHA256" /tmp/crictl.tar.gz | sha256sum -c -
+          tar -xzf /tmp/crictl.tar.gz -C /tmp
+          chmod +x /tmp/crictl
+          rm /tmp/crictl.tar.gz /tmp/crictl.tar.gz.sha256
+
+      - name: 🔧 Prune containerd images
+        id: containerd
+        run: |
+          set -euo pipefail
+          ENDPOINT="unix:///run/k3s/containerd/containerd.sock"
+          CRICTL="sudo /tmp/crictl --runtime-endpoint $ENDPOINT"
+
+          BEFORE_LIST=$($CRICTL images -q 2>/dev/null | wc -l || true)
+          BEFORE_BYTES=$($CRICTL images -o json 2>/dev/null | jq '[.images[].size | tonumber] | add // 0' || echo "0")
+
+          $CRICTL rmi --prune 2>&1
+
+          AFTER_LIST=$($CRICTL images -q 2>/dev/null | wc -l || true)
+          AFTER_BYTES=$($CRICTL images -o json 2>/dev/null | jq '[.images[].size | tonumber] | add // 0' || echo "0")
+
+          REMOVED=$(( BEFORE_LIST - AFTER_LIST ))
+          [ "$REMOVED" -lt 0 ] && REMOVED=0
+
+          FREED_BYTES=$(( BEFORE_BYTES - AFTER_BYTES ))
+          [ "$FREED_BYTES" -lt 0 ] && FREED_BYTES=0
+          if [ "$FREED_BYTES" -ge 1073741824 ]; then
+            FREED_HUMAN=$(awk "BEGIN {printf \"%.2fGB\", $FREED_BYTES/1073741824}")
+          elif [ "$FREED_BYTES" -ge 1048576 ]; then
+            FREED_HUMAN=$(awk "BEGIN {printf \"%.2fMB\", $FREED_BYTES/1048576}")
+          elif [ "$FREED_BYTES" -ge 1024 ]; then
+            FREED_HUMAN=$(awk "BEGIN {printf \"%.2fKB\", $FREED_BYTES/1024}")
+          else
+            FREED_HUMAN="${FREED_BYTES}B"
+          fi
+
+          echo "removed=$REMOVED" >> "$GITHUB_OUTPUT"
+          echo "before=$BEFORE_LIST" >> "$GITHUB_OUTPUT"
+          echo "after=$AFTER_LIST" >> "$GITHUB_OUTPUT"
+          echo "reclaimed=$FREED_HUMAN" >> "$GITHUB_OUTPUT"
+
+      - name: 📱 Notify Telegram
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram is not configured; skipping notification."
+            exit 0
+          fi
+          DOCKER_RECLAIMED="${{ steps.docker.outputs.reclaimed }}"
+          DOCKER_IMAGES="${{ steps.docker.outputs.images_removed }}"
+          DOCKER_BEFORE="${{ steps.docker.outputs.before }}"
+          DOCKER_AFTER="${{ steps.docker.outputs.after }}"
+
+          CONTAINERD_REMOVED="${{ steps.containerd.outputs.removed }}"
+          CONTAINERD_BEFORE="${{ steps.containerd.outputs.before }}"
+          CONTAINERD_AFTER="${{ steps.containerd.outputs.after }}"
+          CONTAINERD_RECLAIMED="${{ steps.containerd.outputs.reclaimed }}"
+
+          MESSAGE="🧹 *Image cleanup completed*
+
+          🐳 *Docker*
+          • Images before: \`${DOCKER_BEFORE}\`
+          • Images removed: \`${DOCKER_IMAGES}\`
+          • Images after: \`${DOCKER_AFTER}\`
+          • Space reclaimed: \`${DOCKER_RECLAIMED}\`
+
+          📦 *containerd (k3s)*
+          • Images before: \`${CONTAINERD_BEFORE}\`
+          • Images removed: \`${CONTAINERD_REMOVED}\`
+          • Images after: \`${CONTAINERD_AFTER}\`
+          • Space reclaimed: \`${CONTAINERD_RECLAIMED}\`"
+
+          curl -fsSL -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode="Markdown" \
+            -d text="$MESSAGE"

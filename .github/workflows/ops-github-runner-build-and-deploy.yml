@@ -1,0 +1,106 @@
+name: 🚀 Build and Deploy (github-runner)
+
+# Special case, kept as a plain workflow (not workflow_call): this builds and deploys the
+# self-hosted runner that every other workflow in this org depends on, including this repo's own
+# ci-actionlint.yml. It lives here for organization alongside the other host-ops workflows, not
+# because other repos are meant to call it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_version:
+        description: "GitHub Actions Runner CLI version (e.g. 2.335.1)"
+        required: true
+        default: "2.335.1"
+
+concurrency:
+  group: github-runner-host-operations
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 🏗️ Build and push image
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      id-token: write # required so this job can request a GitHub OIDC token for Infisical
+    outputs:
+      image_tag: ${{ inputs.runner_version }}
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - name: Checkout devidence-dev/github-runner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: devidence-dev/github-runner
+
+      - name: Fetch GHCR_TOKEN from Infisical
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        with:
+          method: "oidc"
+          identity-id: "77942652-da93-4daa-9f33-62534699496b"
+          domain: "https://app.infisical.com"
+          project-slug: "homelab-devidence"
+          env-slug: "prod"
+          secret-path: "/cross"
+          export-type: "env"
+
+      - name: Login to ghcr.io
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg RUNNER_VERSION=${{ inputs.runner_version }} \
+            -f Dockerfile \
+            -t ghcr.io/devidence-dev/github-runner:${{ inputs.runner_version }} \
+            .
+
+      - name: Push to GHCR
+        run: docker push ghcr.io/devidence-dev/github-runner:${{ inputs.runner_version }}
+
+      - name: Resolve pushed image digest
+        id: digest
+        run: |
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "ghcr.io/devidence-dev/github-runner:${{ inputs.runner_version }}" | cut -d'@' -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: 🚀 Update homelab
+    needs: build
+    runs-on: self-hosted
+    environment: production
+    steps:
+      - name: Update image tag in homelab
+        env:
+          HOMELAB_DEPLOY_TOKEN: ${{ secrets.HOMELAB_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR=$(mktemp -d /tmp/homelab-runner-deploy.XXXXXX)
+          GIT_ASKPASS_SCRIPT=$(mktemp /tmp/homelab-runner-askpass.XXXXXX)
+          cleanup() { rm -rf "$DEPLOY_DIR" "$GIT_ASKPASS_SCRIPT"; }
+          trap cleanup EXIT
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'case "$1" in' \
+            '*Username*) printf "%s\\n" "x-access-token" ;;' \
+            '*Password*) printf "%s\\n" "$HOMELAB_DEPLOY_TOKEN" ;;' \
+            'esac' > "$GIT_ASKPASS_SCRIPT"
+          chmod 700 "$GIT_ASKPASS_SCRIPT"
+          export GIT_ASKPASS="$GIT_ASKPASS_SCRIPT" GIT_TERMINAL_PROMPT=0
+          git clone https://github.com/devidence-dev/homelab.git "$DEPLOY_DIR"
+          cd "$DEPLOY_DIR"
+          VALUES=kubernetes/infrastructure/github-runner/values.yaml
+          sed -i "s|tag: .*|tag: \"${{ needs.build.outputs.image_tag }}\"|" "$VALUES"
+          # Written on every build: if re-run with the same runner_version (only the
+          # Dockerfile base image changed, not the runner version), the tag stays the same
+          # but the digest doesn't — that's what gives ArgoCD a real diff to sync.
+          sed -i "s|digest: .*|digest: \"${{ needs.build.outputs.digest }}\"|" "$VALUES"
+          git config user.email "ci@devidence.dev"
+          git config user.name "homelab-ci"
+          git add "$VALUES"
+          if git diff --cached --quiet; then
+            echo "Tag is already up to date; nothing to deploy."
+            exit 0
+          fi
+          git commit -m "chore(github-runner): bump image to ${{ needs.build.outputs.image_tag }}"
+          git push

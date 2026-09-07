@@ -49,13 +49,21 @@ flowchart LR
 | Path | Type | Purpose |
 |---|---|---|
 | `.github/workflows/cd-build-deploy-semver.yml` | Reusable workflow (`workflow_call`) | version → build & push → deploy pipeline for semver-versioned apps |
+| `.github/workflows/cd-build-deploy-manual-version.yml` | Reusable workflow (`workflow_call`) | build & push → deploy pipeline for apps with a manual version input (no semver, no git tags) |
 | `.github/workflows/release.yml` | Workflow (`workflow_dispatch`) | Tags a new release of *this* repo (see Versioning) |
 | `.github/workflows/ci-actionlint.yml` | Workflow (`push`/`pull_request`) | Lints every workflow file here with [`actionlint`](https://github.com/rhysd/actionlint) |
 | `.github/workflows/ci-go.yml` | Reusable workflow (`workflow_call`) | Standard Go CI: tidy-check, vet, lint, test, govulncheck, build, Sonar — one independent job each |
+| `.github/workflows/ci-node.yml` | Reusable workflow (`workflow_call`) | Node CI: lint, type-check, test, build — each toggleable, since Node repos here vary more than Go ones |
+| `.github/workflows/ci-python.yml` | Reusable workflow (`workflow_call`) | Python CI: ruff (lint+format, blocking), pytest, Sonar |
 | `cd/steps/ghcr-login/` | Composite action | Fetches `GHCR_TOKEN` from Infisical (OIDC) and logs Docker into `ghcr.io` |
-| `cd/steps/homelab-deploy/` | Composite action | Clones `homelab`, updates `tag`/`digest` in the app's `values.yaml`, commits+pushes if there's a real change |
+| `cd/steps/homelab-deploy/` | Composite action | Clones `homelab`, updates `tag`/`digest` in the app's `values.yaml`, commits+pushes if there's a real change — shared by both `cd-*.yml` workflows |
 | `ci/go/steps/{setup,tidy-check,vet,lint,test,vulncheck,build}/` | Composite actions | Building blocks of `ci-go.yml` — independent and idempotent, each assumes `setup` already ran in the same job |
+| `ci/node/steps/{setup,lint,check,test,build}/` | Composite actions | Building blocks of `ci-node.yml` — each just runs the repo's own `bun run <script>` |
+| `ci/python/steps/{setup,ruff,test}/` | Composite actions | Building blocks of `ci-python.yml` |
 | `ci/steps/sonar-scan/` | Composite action | Fetches `SONAR_TOKEN` from Infisical and runs the SonarCloud scan, blocking on the Quality Gate — language-agnostic, shared by every `ci-<lang>.yml` |
+| `.github/workflows/ops-github-runner-build-and-deploy.yml` | Workflow (`workflow_dispatch`) | Builds and deploys the `devidence-dev/github-runner` image — see [Host-ops](#-host-ops-github-runner) |
+| `.github/workflows/ops-github-runner-check-updates.yml` | Workflow (`schedule` + `workflow_dispatch`) | Scans running pods for outdated images, notifies via Telegram — see [Host-ops](#-host-ops-github-runner) |
+| `.github/workflows/ops-github-runner-cleanup.yml` | Workflow (`schedule` + `workflow_dispatch`) | Prunes unused Docker/containerd images on the runner host — see [Host-ops](#-host-ops-github-runner) |
 
 > Workflow files must live flat in `.github/workflows/` — GitHub doesn't scan subdirectories there.
 > The `cd-`/`ci-` filename prefix is just a naming convention to group them; composite actions
@@ -210,6 +218,30 @@ flowchart TB
 
 Each of the seven jobs does its own `checkout` + `ci/go/steps/setup` — no job depends on another's
 output. A failure in `lint` doesn't hide whether `test` or `vulncheck` passed.
+
+## 🖥️ Host-ops: github-runner
+
+The three `ops-github-runner-*.yml` files are a deliberate exception to "reusable workflow /
+composite action" framing above: they're plain workflows (no `workflow_call`) that operate the
+single self-hosted runner box itself — nothing else invokes them. They live here for
+organizational consistency (one place for this org's Actions plumbing) after
+`devidence-dev/github-runner`'s own `.github/workflows/` was retired in favor of this repo
+(2026-09-07), reversing an earlier decision to keep `github-runner` out of this migration
+(it still isn't onboarded to `cd-build-deploy-*.yml` — `build-and-deploy` keeps its own
+hand-rolled build/deploy job, just relocated).
+
+`build-and-deploy` checks out `devidence-dev/github-runner` explicitly (`with: repository:`) to
+get its `Dockerfile`, since the workflow no longer lives in that repo.
+
+`check-updates` and `cleanup` are cron-triggered, and both had a real scheduling bug fixed during
+the move: `cron: '0 13 */2 * *'` / `'0 8 */3 * *'` looked like "every 2/3 days" but a stepped
+day-of-month field actually means "days of the month divisible by N" — that sequence resets at
+every month boundary, so it can fire two days in a row right when the month rolls over. A
+top-of-the-hour minute (`:00`) also sits in GitHub's most congested scheduler slot, which is
+documented to add unpredictable delay. Both are now a **daily** cron at a fixed non-`:00` minute
+(`13:15`/`13:45` UTC, ~8:15/8:45 AM GMT-5) gated by a cheap `ubuntu-latest` `should-run` job that
+checks `days-since-epoch % N` — an exact, drift-free N-day cadence that still only touches the
+self-hosted runner on days it actually has work to do.
 
 ## 🗺️ Roadmap: CI, other languages
 
