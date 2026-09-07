@@ -1,0 +1,65 @@
+name: "Bump homelab values.yaml"
+description: "Clones homelab, updates tag/digest in the app's values.yaml, and commits+pushes if there's a real change"
+
+inputs:
+  homelab_deploy_token:
+    description: "Token with push access to devidence-dev/homelab"
+    required: true
+  tag:
+    required: true
+  digest:
+    required: true
+  is_rebuild:
+    required: true
+  values_path:
+    description: "Path to the app's values.yaml inside the homelab repo"
+    required: true
+  app_name:
+    required: true
+  sed_anchor_repository:
+    description: "If set, anchors the tag/digest sed to this GHCR repository line instead of a global sed"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Update image tag in homelab
+      shell: bash
+      env:
+        HOMELAB_DEPLOY_TOKEN: ${{ inputs.homelab_deploy_token }}
+        TAG: ${{ inputs.tag }}
+        DIGEST: ${{ inputs.digest }}
+        IS_REBUILD: ${{ inputs.is_rebuild }}
+        VALUES_PATH: ${{ inputs.values_path }}
+        APP_NAME: ${{ inputs.app_name }}
+        SED_ANCHOR: ${{ inputs.sed_anchor_repository }}
+      run: |
+        DEPLOY_DIR=$(mktemp -d)
+        trap 'rm -rf "$DEPLOY_DIR"' EXIT
+
+        git clone "https://x-access-token:${HOMELAB_DEPLOY_TOKEN}@github.com/devidence-dev/homelab.git" "$DEPLOY_DIR"
+        cd "$DEPLOY_DIR"
+
+        if [ -n "$SED_ANCHOR" ]; then
+          # Range anchor, not a line count: robust to comment blocks inserted between
+          # repository: and tag:/digest: (a real bug hit porting this to a multi-container app).
+          sed -i "/repository: ${SED_ANCHOR}/,/tag:/{s|tag: .*|tag: \"${TAG}\"|}" "$VALUES_PATH"
+          sed -i "/repository: ${SED_ANCHOR}/,/digest:/{s|digest: .*|digest: \"${DIGEST}\"|}" "$VALUES_PATH"
+        else
+          sed -i "s|tag: .*|tag: \"${TAG}\"|" "$VALUES_PATH"
+          sed -i "s|digest: .*|digest: \"${DIGEST}\"|" "$VALUES_PATH"
+        fi
+
+        git config user.email "ci@devidence.dev"
+        git config user.name "homelab-ci"
+        git add "$VALUES_PATH"
+
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          MSG="chore(${APP_NAME}): bump image to ${TAG}"
+          [ "$IS_REBUILD" = "true" ] && MSG="chore(${APP_NAME}): rebuild image (same tag ${TAG})"
+          git commit -m "$MSG"
+          git push
+        fi

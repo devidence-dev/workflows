@@ -51,6 +51,11 @@ on:
         required: false
         type: boolean
         default: false
+      use_production_environment:
+        description: "If true (default), the deploy job runs under environment: production and fetches HOMELAB_DEPLOY_TOKEN from the caller's own secret. If false, no environment is set and the token is fetched via Infisical/OIDC instead — for apps whose Infisical machine identity trust breaks under an environment's OIDC sub claim."
+        required: false
+        type: boolean
+        default: true
     secrets:
       HOMELAB_DEPLOY_TOKEN:
         required: false
@@ -201,57 +206,62 @@ jobs:
           fi
 
   # ==========================================
-  # 🚀 Deploy to production
+  # 🚀 Deploy to production — two variants, same steps
   # ==========================================
+  # A job calling a reusable workflow (`uses:`) cannot itself set `environment:` (confirmed
+  # against GitHub's docs + actionlint), so whether to gate under `environment: production` has
+  # to be decided in here, not by the caller. Most apps want the gate and fetch
+  # HOMELAB_DEPLOY_TOKEN as a plain repo secret; at least one app must NOT run under an
+  # environment (it changes the OIDC `sub` claim and breaks its Infisical machine identity
+  # match) and instead fetches the token via Infisical/OIDC. Both variants call the same
+  # composite action so the actual deploy logic isn't duplicated.
   deploy:
     name: 🚀 Deploy to production
+    if: inputs.use_production_environment
     needs: [version, build]
     runs-on: self-hosted
-    # NOTE: hardcoded for now — every current caller (automation-hub) wants this gate. A job
-    # calling a reusable workflow (`uses:`) cannot itself set `environment:` (confirmed against
-    # GitHub's docs + actionlint), so this can only live here, inside the reusable workflow. When
-    # a still-private multi-container app is ported (it must NOT run under an environment: it changes the OIDC `sub` claim
-    # and breaks its Infisical machine identity match), this needs to become two variant jobs
-    # (with/without `environment:`, gated by an input) sharing the same deploy steps.
     environment: production
     permissions:
       contents: read
     steps:
-      - name: Update image tag in homelab
-        env:
-          HOMELAB_DEPLOY_TOKEN: ${{ secrets.HOMELAB_DEPLOY_TOKEN }}
-          TAG: ${{ needs.version.outputs.tag }}
-          DIGEST: ${{ needs.build.outputs.digest }}
-          IS_REBUILD: ${{ needs.version.outputs.is_rebuild }}
-          VALUES_PATH: ${{ inputs.values_path }}
-          APP_NAME: ${{ inputs.app_name }}
-          SED_ANCHOR: ${{ inputs.sed_anchor_repository }}
-        run: |
-          DEPLOY_DIR=$(mktemp -d)
-          trap 'rm -rf "$DEPLOY_DIR"' EXIT
+      - name: Bump homelab
+        uses: devidence-dev/workflows/cd/steps/homelab-deploy@v1
+        with:
+          homelab_deploy_token: ${{ secrets.HOMELAB_DEPLOY_TOKEN }}
+          tag: ${{ needs.version.outputs.tag }}
+          digest: ${{ needs.build.outputs.digest }}
+          is_rebuild: ${{ needs.version.outputs.is_rebuild }}
+          values_path: ${{ inputs.values_path }}
+          app_name: ${{ inputs.app_name }}
+          sed_anchor_repository: ${{ inputs.sed_anchor_repository }}
 
-          git clone "https://x-access-token:${HOMELAB_DEPLOY_TOKEN}@github.com/devidence-dev/homelab.git" "$DEPLOY_DIR"
-          cd "$DEPLOY_DIR"
+  deploy-no-environment:
+    name: 🚀 Deploy to production (no environment)
+    if: ${{ !inputs.use_production_environment }}
+    needs: [version, build]
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      id-token: write # required to request a GitHub OIDC token for Infisical
+    steps:
+      - name: Fetch HOMELAB_DEPLOY_TOKEN from Infisical
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        with:
+          method: "oidc"
+          identity-id: "77942652-da93-4daa-9f33-62534699496b"
+          domain: "https://app.infisical.com"
+          project-slug: "homelab-devidence"
+          env-slug: "prod"
+          secret-path: "/cross"
+          export-type: "env"
 
-          if [ -n "$SED_ANCHOR" ]; then
-            # Range anchor, not a line count: robust to comment blocks inserted between
-            # repository: and tag:/digest: (a real bug hit porting this to a multi-container app).
-            sed -i "/repository: ${SED_ANCHOR}/,/tag:/{s|tag: .*|tag: \"${TAG}\"|}" "$VALUES_PATH"
-            sed -i "/repository: ${SED_ANCHOR}/,/digest:/{s|digest: .*|digest: \"${DIGEST}\"|}" "$VALUES_PATH"
-          else
-            sed -i "s|tag: .*|tag: \"${TAG}\"|" "$VALUES_PATH"
-            sed -i "s|digest: .*|digest: \"${DIGEST}\"|" "$VALUES_PATH"
-          fi
-
-          git config user.email "ci@devidence.dev"
-          git config user.name "homelab-ci"
-          git add "$VALUES_PATH"
-
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            MSG="chore(${APP_NAME}): bump image to ${TAG}"
-            [ "$IS_REBUILD" = "true" ] && MSG="chore(${APP_NAME}): rebuild image (same tag ${TAG})"
-            git commit -m "$MSG"
-            git push
-          fi
+      - name: Bump homelab
+        uses: devidence-dev/workflows/cd/steps/homelab-deploy@v1
+        with:
+          homelab_deploy_token: ${{ env.HOMELAB_DEPLOY_TOKEN }}
+          tag: ${{ needs.version.outputs.tag }}
+          digest: ${{ needs.build.outputs.digest }}
+          is_rebuild: ${{ needs.version.outputs.is_rebuild }}
+          values_path: ${{ inputs.values_path }}
+          app_name: ${{ inputs.app_name }}
+          sed_anchor_repository: ${{ inputs.sed_anchor_repository }}
