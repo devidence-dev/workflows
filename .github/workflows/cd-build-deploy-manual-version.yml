@@ -1,0 +1,171 @@
+name: 🔁 Reusable — Build, Push & Deploy (manual version)
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: "App name, used for git commit messages and as the default GHCR image name."
+        required: true
+        type: string
+      image_name:
+        description: "GHCR image name, if different from app_name."
+        required: false
+        type: string
+        default: ""
+      dockerfile_path:
+        description: "Path to the Dockerfile, relative to the repo root."
+        required: false
+        type: string
+        default: "Dockerfile"
+      version:
+        description: "The version to build and deploy (caller owns the workflow_dispatch input for this — e.g. a language-tool release version, a runner CLI version)."
+        required: true
+        type: string
+      version_pattern:
+        description: "Optional regex the version input must match (e.g. '^[0-9]+\\.[0-9]+(\\.[0-9]+)?$'). Leave empty to skip validation."
+        required: false
+        type: string
+        default: ""
+      build_args:
+        description: "Newline-separated KEY=VALUE pairs, each passed as a --build-arg. Since `version` is already a plain caller input (not calculated by this workflow), the caller can safely reference it here directly, e.g. 'LT_VERSION=${{ inputs.lt_version }}'."
+        required: false
+        type: string
+        default: ""
+      values_path:
+        description: "Path to the app's values.yaml inside the homelab repo."
+        required: true
+        type: string
+      sed_anchor_repository:
+        description: "If set, anchors the tag/digest sed to this GHCR repository line instead of a global sed — required when values.yaml has more than one repository:/tag: pair."
+        required: false
+        type: string
+        default: ""
+      use_production_environment:
+        description: "If true (default), the deploy job runs under environment: production and fetches HOMELAB_DEPLOY_TOKEN from the caller's own secret. If false, no environment is set and the token is fetched via Infisical/OIDC instead."
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      HOMELAB_DEPLOY_TOKEN:
+        required: false
+
+jobs:
+  # ==========================================
+  # 🏗️ Build and push image
+  # ==========================================
+  build:
+    name: 🏗️ Build & Push image
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      id-token: write # required so this job can request a GitHub OIDC token for Infisical
+    env:
+      IMAGE: ${{ inputs.image_name != '' && inputs.image_name || inputs.app_name }}
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate version
+        if: inputs.version_pattern != ''
+        env:
+          VERSION: ${{ inputs.version }}
+          PATTERN: ${{ inputs.version_pattern }}
+        run: |
+          if ! [[ "$VERSION" =~ $PATTERN ]]; then
+            echo "::error::Invalid version '$VERSION' (expected to match: $PATTERN)"
+            exit 1
+          fi
+
+      - name: 🔐 GHCR login
+        uses: devidence-dev/workflows/cd/steps/ghcr-login@v1
+
+      - name: Build image
+        env:
+          VERSION: ${{ inputs.version }}
+          DOCKERFILE: ${{ inputs.dockerfile_path }}
+          BUILD_ARGS: ${{ inputs.build_args }}
+        run: |
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+
+          ARGS=()
+          if [ -n "$BUILD_ARGS" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && ARGS+=(--build-arg "$line")
+            done <<< "$BUILD_ARGS"
+          fi
+
+          docker build \
+            "${ARGS[@]}" \
+            --platform "linux/${ARCH}" \
+            -f "$DOCKERFILE" \
+            -t "ghcr.io/devidence-dev/${IMAGE}:${VERSION}" \
+            .
+
+      - name: Push to GHCR
+        env:
+          VERSION: ${{ inputs.version }}
+        run: docker push "ghcr.io/devidence-dev/${IMAGE}:${VERSION}"
+
+      - name: Resolve pushed image digest
+        id: digest
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "ghcr.io/devidence-dev/${IMAGE}:${VERSION}" | cut -d'@' -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+  # ==========================================
+  # 🚀 Deploy to production — two variants, same steps (see cd-build-deploy-semver.yml)
+  # ==========================================
+  deploy:
+    name: 🚀 Deploy to production
+    if: inputs.use_production_environment
+    needs: build
+    runs-on: self-hosted
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Bump homelab
+        uses: devidence-dev/workflows/cd/steps/homelab-deploy@v1
+        with:
+          homelab_deploy_token: ${{ secrets.HOMELAB_DEPLOY_TOKEN }}
+          tag: ${{ inputs.version }}
+          digest: ${{ needs.build.outputs.digest }}
+          is_rebuild: "false"
+          values_path: ${{ inputs.values_path }}
+          app_name: ${{ inputs.app_name }}
+          sed_anchor_repository: ${{ inputs.sed_anchor_repository }}
+
+  deploy-no-environment:
+    name: 🚀 Deploy to production (no environment)
+    if: ${{ !inputs.use_production_environment }}
+    needs: build
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      id-token: write # required to request a GitHub OIDC token for Infisical
+    steps:
+      - name: Fetch HOMELAB_DEPLOY_TOKEN from Infisical
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        with:
+          method: "oidc"
+          identity-id: "77942652-da93-4daa-9f33-62534699496b"
+          domain: "https://app.infisical.com"
+          project-slug: "homelab-devidence"
+          env-slug: "prod"
+          secret-path: "/cross"
+          export-type: "env"
+
+      - name: Bump homelab
+        uses: devidence-dev/workflows/cd/steps/homelab-deploy@v1
+        with:
+          homelab_deploy_token: ${{ env.HOMELAB_DEPLOY_TOKEN }}
+          tag: ${{ inputs.version }}
+          digest: ${{ needs.build.outputs.digest }}
+          is_rebuild: "false"
+          values_path: ${{ inputs.values_path }}
+          app_name: ${{ inputs.app_name }}
+          sed_anchor_repository: ${{ inputs.sed_anchor_repository }}
