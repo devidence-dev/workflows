@@ -1,0 +1,62 @@
+name: 🧪 Reusable — Python CI
+
+on:
+  workflow_call:
+    inputs:
+      python_version:
+        required: false
+        type: string
+        default: "3.14"
+      coverage_source:
+        description: "Package path to measure coverage for (e.g. src/quantwarden), used by the test and sonar jobs."
+        required: true
+        type: string
+
+jobs:
+  # Each job below is independent and runs in parallel — none `needs:` another. `uv sync --locked`
+  # in setup already fails the job if the lockfile is stale, so there's no separate tidy-check job
+  # like Go's — that's what `uv sync --locked` itself is for here.
+
+  lint:
+    name: 🧹 Ruff
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/python/steps/setup@v1
+        with:
+          python-version: ${{ inputs.python_version }}
+      - uses: devidence-dev/workflows/ci/python/steps/ruff@v1
+
+  test:
+    name: 🧪 pytest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/python/steps/setup@v1
+        with:
+          python-version: ${{ inputs.python_version }}
+      - uses: devidence-dev/workflows/ci/python/steps/test@v1
+        with:
+          coverage_source: ${{ inputs.coverage_source }}
+
+  sonar:
+    name: 📊 SonarCloud
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required to request an OIDC token for Infisical
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history; otherwise Sonar warns about a shallow clone
+      - uses: devidence-dev/workflows/ci/python/steps/setup@v1
+        with:
+          python-version: ${{ inputs.python_version }}
+      - uses: devidence-dev/workflows/ci/python/steps/test@v1
+        with:
+          coverage_source: ${{ inputs.coverage_source }}
+      - uses: devidence-dev/workflows/ci/steps/sonar-scan@v1

@@ -1,0 +1,9 @@
+name: "Node build verification"
+description: "Runs the repo's own build script (bun run build)"
+
+runs:
+  using: "composite"
+  steps:
+    - name: bun run build
+      shell: bash
+      run: bun run build

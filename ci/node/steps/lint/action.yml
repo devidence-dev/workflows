@@ -1,0 +1,9 @@
+name: "Node lint"
+description: "Runs the repo's own lint script (bun run lint)"
+
+runs:
+  using: "composite"
+  steps:
+    - name: bun run lint
+      shell: bash
+      run: bun run lint

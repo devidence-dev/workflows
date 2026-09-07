@@ -1,0 +1,13 @@
+name: "Ruff lint + format check"
+description: "Runs ruff check and ruff format --check, blocking. Uses uvx — no dependency needed in the project itself."
+
+runs:
+  using: "composite"
+  steps:
+    - name: ruff check
+      shell: bash
+      run: uvx ruff check .
+
+    - name: ruff format --check
+      shell: bash
+      run: uvx ruff format --check .

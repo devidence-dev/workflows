@@ -1,0 +1,16 @@
+name: "Python test"
+description: "Runs pytest with coverage"
+
+inputs:
+  coverage_source:
+    description: "Package path to measure coverage for (e.g. src/quantwarden)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: pytest
+      shell: bash
+      env:
+        COVERAGE_SOURCE: ${{ inputs.coverage_source }}
+      run: uv run pytest --cov="$COVERAGE_SOURCE" --cov-report=xml -q

@@ -1,0 +1,9 @@
+name: "Node type-check"
+description: "Runs the repo's own type-check script (bun run check)"
+
+runs:
+  using: "composite"
+  steps:
+    - name: bun run check
+      shell: bash
+      run: bun run check

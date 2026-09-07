@@ -1,0 +1,9 @@
+name: "Node test"
+description: "Runs the repo's own test script (bun run test)"
+
+runs:
+  using: "composite"
+  steps:
+    - name: bun run test
+      shell: bash
+      run: bun run test

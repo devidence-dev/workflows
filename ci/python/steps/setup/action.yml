@@ -1,0 +1,19 @@
+name: "Python setup"
+description: "Sets up Python via uv and syncs dependencies from a locked lockfile"
+
+inputs:
+  python-version:
+    required: false
+    default: "3.14"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup uv
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Sync dependencies (fails if lockfile is stale)
+      shell: bash
+      run: uv sync --locked

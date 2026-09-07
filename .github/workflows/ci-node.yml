@@ -1,0 +1,85 @@
+name: 🧪 Reusable — Node CI
+
+on:
+  workflow_call:
+    inputs:
+      bun_version:
+        description: "Bun version to install."
+        required: false
+        type: string
+        default: "latest"
+      run_lint:
+        description: "Run `bun run lint`. Disable if the repo doesn't define that script yet."
+        required: false
+        type: boolean
+        default: true
+      run_check:
+        description: "Run `bun run check` (type-check). Disable if the repo doesn't define that script yet."
+        required: false
+        type: boolean
+        default: true
+      run_test:
+        description: "Run `bun run test`. Disable if the repo doesn't define that script yet."
+        required: false
+        type: boolean
+        default: true
+      run_build:
+        description: "Run `bun run build`. Disable if the repo doesn't define that script yet."
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  # Each job below is independent and runs in parallel — none `needs:` another.
+
+  lint:
+    name: 🧹 Lint
+    if: inputs.run_lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/node/steps/setup@v1
+        with:
+          bun-version: ${{ inputs.bun_version }}
+      - uses: devidence-dev/workflows/ci/node/steps/lint@v1
+
+  check:
+    name: 🔍 Type-check
+    if: inputs.run_check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/node/steps/setup@v1
+        with:
+          bun-version: ${{ inputs.bun_version }}
+      - uses: devidence-dev/workflows/ci/node/steps/check@v1
+
+  test:
+    name: 🧪 Test
+    if: inputs.run_test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/node/steps/setup@v1
+        with:
+          bun-version: ${{ inputs.bun_version }}
+      - uses: devidence-dev/workflows/ci/node/steps/test@v1
+
+  build:
+    name: 🏗️ Build verification
+    if: inputs.run_build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/node/steps/setup@v1
+        with:
+          bun-version: ${{ inputs.bun_version }}
+      - uses: devidence-dev/workflows/ci/node/steps/build@v1
