@@ -53,8 +53,13 @@ jobs:
           AFTER_LIST=$(docker images -q 2>/dev/null | wc -l || echo "0")
           RECLAIMED=$(echo "$OUTPUT" | grep -i "Total reclaimed space" | sed 's/.*: //')
           [ -z "$RECLAIMED" ] && RECLAIMED="0B"
-          IMAGES_REMOVED=$(echo "$OUTPUT" | grep -ci "^deleted:" || true)
-          [ -z "$IMAGES_REMOVED" ] && IMAGES_REMOVED="0"
+
+          # `docker system prune` prints one "deleted:" line per removed layer (manifest +
+          # each unreferenced blob), not one per image — grepping those lines overcounts.
+          # Derive the count from the before/after image totals instead, same as the
+          # containerd step below.
+          IMAGES_REMOVED=$(( BEFORE_LIST - AFTER_LIST ))
+          [ "$IMAGES_REMOVED" -lt 0 ] && IMAGES_REMOVED=0
 
           {
             echo "reclaimed=$RECLAIMED"
