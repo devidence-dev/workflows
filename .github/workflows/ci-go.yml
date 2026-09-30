@@ -38,7 +38,7 @@ jobs:
 
   tidy-check:
     name: 🧹 go mod tidy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -50,7 +50,7 @@ jobs:
 
   vet:
     name: 🔍 go vet
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -62,7 +62,7 @@ jobs:
 
   lint:
     name: 🧹 golangci-lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -76,7 +76,7 @@ jobs:
 
   test:
     name: 🧪 go test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -88,7 +88,7 @@ jobs:
 
   vulncheck:
     name: 🔒 govulncheck
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -100,7 +100,7 @@ jobs:
 
   build:
     name: 🏗️ Build verification
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -117,7 +117,7 @@ jobs:
 
   sonar:
     name: 📊 SonarCloud
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       id-token: write # required to request an OIDC token for Infisical

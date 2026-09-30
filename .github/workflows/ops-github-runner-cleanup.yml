@@ -23,7 +23,7 @@ jobs:
   should-run:
     name: 🗓️ Every-3-days gate
     if: github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       run: ${{ steps.gate.outputs.run }}
     steps:

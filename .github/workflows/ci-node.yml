@@ -35,7 +35,7 @@ jobs:
   lint:
     name: 🧹 Lint
     if: inputs.run_lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -48,7 +48,7 @@ jobs:
   check:
     name: 🔍 Type-check
     if: inputs.run_check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -61,7 +61,7 @@ jobs:
   test:
     name: 🧪 Test
     if: inputs.run_test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -74,7 +74,7 @@ jobs:
   build:
     name: 🏗️ Build verification
     if: inputs.run_build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
