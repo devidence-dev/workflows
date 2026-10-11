@@ -62,8 +62,9 @@ flowchart LR
 | `ci/python/steps/{setup,ruff,test}/` | Composite actions | Building blocks of `ci-python.yml` |
 | `ci/steps/sonar-scan/` | Composite action | Fetches `SONAR_TOKEN` from Infisical and runs the SonarCloud scan, blocking on the Quality Gate — language-agnostic, shared by every `ci-<lang>.yml` |
 | `.github/workflows/ops-github-runner-build-and-deploy.yml` | Workflow (`workflow_dispatch`) | Builds and deploys the `devidence-dev/github-runner` image — see [Host-ops](#-host-ops-github-runner) |
-| `.github/workflows/ops-github-runner-check-updates.yml` | Workflow (`schedule` + `workflow_dispatch`) | Scans running pods for outdated images, notifies via Telegram — see [Host-ops](#-host-ops-github-runner) |
-| `.github/workflows/ops-github-runner-cleanup.yml` | Workflow (`schedule` + `workflow_dispatch`) | Prunes unused Docker/containerd images on the runner host — see [Host-ops](#-host-ops-github-runner) |
+| `.github/workflows/ops-github-runner-check-updates.yml` | Workflow (`workflow_dispatch` only, scheduled by automation-hub) | Scans running pods for outdated images, notifies via Telegram — see [Host-ops](#-host-ops-github-runner) |
+| `.github/workflows/ops-github-runner-cleanup.yml` | Workflow (`workflow_dispatch` only, scheduled by automation-hub) | Prunes unused Docker/containerd images on the runner host — see [Host-ops](#-host-ops-github-runner) |
+| `.github/workflows/ops-dependency-report.yml` | Workflow (`schedule` + `workflow_dispatch`) | Weekly read-only Renovate scan of internal repos (runtimes, frameworks, libraries), summary to Telegram — see [Dependency report](#-ops-dependency-report) |
 
 > Workflow files must live flat in `.github/workflows/` — GitHub doesn't scan subdirectories there.
 > The `cd-`/`ci-` filename prefix is just a naming convention to group them; composite actions
@@ -233,15 +234,28 @@ hand-rolled build/deploy job, just relocated).
 `build-and-deploy` checks out `devidence-dev/github-runner` explicitly (`with: repository:`) to
 get its `Dockerfile`, since the workflow no longer lives in that repo.
 
-`check-updates` and `cleanup` are cron-triggered, and both had a real scheduling bug fixed during
-the move: `cron: '0 13 */2 * *'` / `'0 8 */3 * *'` looked like "every 2/3 days" but a stepped
-day-of-month field actually means "days of the month divisible by N" — that sequence resets at
-every month boundary, so it can fire two days in a row right when the month rolls over. A
-top-of-the-hour minute (`:00`) also sits in GitHub's most congested scheduler slot, which is
-documented to add unpredictable delay. Both are now a **daily** cron at a fixed non-`:00` minute
-(`13:15`/`13:45` UTC, ~8:15/8:45 AM GMT-5) gated by a cheap `ubuntu-latest` `should-run` job that
-checks `days-since-epoch % N` — an exact, drift-free N-day cadence that still only touches the
-self-hosted runner on days it actually has work to do.
+`check-updates` and `cleanup` run only via `workflow_dispatch`; they have no `schedule:` trigger.
+GitHub's own `schedule` trigger ran 4-8 hours late, so the schedule now lives in automation-hub,
+which sends `workflow_dispatch` on a cron in America/Guayaquil:
+
+- `check-updates`: `0 9 * * 1,3,5` (Mon/Wed/Fri 09:00)
+- `cleanup`: `0 9 * * 2,5` (Tue/Fri 09:00)
+
+Both can also be triggered on demand from Telegram with `/run_check_updates` and `/run_cleanup`.
+
+## 📦 Ops: dependency report
+
+`ops-dependency-report.yml` runs Renovate with `dryRun=lookup` — it only reads, never opens
+issues, PRs or branches, so third-party forks can be scanned too — and sends a per-repo summary of
+pending major/minor/patch updates to Telegram. Runs Mondays 14:15 UTC, or on demand from Telegram
+via automation-hub's `/run_dependency_report`.
+
+Nothing repo-specific lives in this file: the repo list, the fork list, the read-only Renovate
+token and the Telegram credentials all come from Infisical (`/dependency-report`). Since this repo
+is public (and so are its run logs and artifacts — see [Visibility](#️-visibility-this-repo-is-public)),
+the workflow masks every repo name, writes Renovate's output to a file instead of the log, sends
+the log tail to Telegram on failure, and never uploads the report as an artifact. Keep it that way
+when editing it.
 
 ## 🗺️ Roadmap: CI, other languages
 

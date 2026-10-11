@@ -5,14 +5,6 @@ name: 🔍 Check Docker Updates & Notify (github-runner)
 # alongside the other host-ops workflows.
 
 on:
-  schedule:
-    # Fires every day at 13:15 UTC (~8:15 AM GMT-5) — the should-run job below gates actual
-    # execution to every 2 days. Daily-cron + modulo-gate on purpose, instead of the previous
-    # '0 13 */2 * *': that pattern resets at every month boundary (day-of-month */N wraps to day
-    # 1), so it would sometimes fire two days in a row. A fixed non-top-of-hour minute also avoids
-    # GitHub's documented scheduler congestion at :00, which is what was pushing real runs into
-    # the afternoon/evening instead of the morning.
-    - cron: '15 13 * * *'
   workflow_dispatch:
     inputs:
       force_check:
@@ -27,25 +19,7 @@ on:
         default: false
 
 jobs:
-  should-run:
-    name: 🗓️ Every-2-days gate
-    if: github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-26.04
-    outputs:
-      run: ${{ steps.gate.outputs.run }}
-    steps:
-      - id: gate
-        run: |
-          DAYS_SINCE_EPOCH=$(( $(date -u +%s) / 86400 ))
-          if [ $(( DAYS_SINCE_EPOCH % 2 )) -eq 0 ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-
   check-updates:
-    needs: should-run
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.should-run.outputs.run == 'true')
     runs-on: self-hosted
     permissions:
       packages: read

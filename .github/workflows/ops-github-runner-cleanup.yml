@@ -5,14 +5,6 @@ name: 🧹 Cleanup unused images (github-runner)
 # alongside the other host-ops workflows.
 
 on:
-  schedule:
-    # Fires every day at 13:45 UTC (~8:45 AM GMT-5) — the should-run job below gates actual
-    # execution to every 3 days. Same daily-cron + modulo-gate reasoning as
-    # ops-github-runner-check-updates.yml: '0 8 */3 * *' wraps at month boundaries (day-of-month
-    # */N resets to day 1), and a top-of-the-hour minute is the most congested slot in GitHub's
-    # scheduler — both were why this used to land at random times instead of the morning.
-    # Offset 30 minutes after check-updates so the two never queue on the same self-hosted runner.
-    - cron: '45 13 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -20,26 +12,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  should-run:
-    name: 🗓️ Every-3-days gate
-    if: github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-26.04
-    outputs:
-      run: ${{ steps.gate.outputs.run }}
-    steps:
-      - id: gate
-        run: |
-          DAYS_SINCE_EPOCH=$(( $(date -u +%s) / 86400 ))
-          if [ $(( DAYS_SINCE_EPOCH % 3 )) -eq 0 ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-
   cleanup:
     name: 🧹 Prune Docker & containerd images
-    needs: should-run
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.should-run.outputs.run == 'true')
     runs-on: self-hosted
     steps:
       - name: 🐳 Prune Docker images
