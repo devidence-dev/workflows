@@ -62,7 +62,6 @@ flowchart LR
 | `ci/python/steps/{setup,ruff,test}/` | Composite actions | Building blocks of `ci-python.yml` |
 | `ci/steps/sonar-scan/` | Composite action | Fetches `SONAR_TOKEN` from Infisical and runs the SonarCloud scan, blocking on the Quality Gate — language-agnostic, shared by every `ci-<lang>.yml` |
 | `.github/workflows/ops-github-runner-build-and-deploy.yml` | Workflow (`workflow_dispatch`) | Builds and deploys the `devidence-dev/github-runner` image — see [Host-ops](#-host-ops-github-runner) |
-| `.github/workflows/ops-github-runner-check-updates.yml` | Workflow (`workflow_dispatch` only, scheduled by automation-hub) | Scans running pods for outdated images, notifies via Telegram — see [Host-ops](#-host-ops-github-runner) |
 | `.github/workflows/ops-github-runner-cleanup.yml` | Workflow (`workflow_dispatch` only, scheduled by automation-hub) | Prunes unused Docker/containerd images on the runner host — see [Host-ops](#-host-ops-github-runner) |
 
 > Workflow files must live flat in `.github/workflows/` — GitHub doesn't scan subdirectories there.
@@ -221,7 +220,7 @@ output. A failure in `lint` doesn't hide whether `test` or `vulncheck` passed.
 
 ## 🖥️ Host-ops: github-runner
 
-The three `ops-github-runner-*.yml` files are a deliberate exception to "reusable workflow /
+The two `ops-github-runner-*.yml` files are a deliberate exception to "reusable workflow /
 composite action" framing above: they're plain workflows (no `workflow_call`) that operate the
 single self-hosted runner box itself — nothing else invokes them. They live here for
 organizational consistency (one place for this org's Actions plumbing) after
@@ -233,14 +232,14 @@ hand-rolled build/deploy job, just relocated).
 `build-and-deploy` checks out `devidence-dev/github-runner` explicitly (`with: repository:`) to
 get its `Dockerfile`, since the workflow no longer lives in that repo.
 
-`check-updates` and `cleanup` run only via `workflow_dispatch`; they have no `schedule:` trigger.
+`cleanup` runs only via `workflow_dispatch`; it has no `schedule:` trigger.
 GitHub's own `schedule` trigger ran 4-8 hours late, so the schedule now lives in automation-hub,
 which sends `workflow_dispatch` on a cron in America/Guayaquil:
 
-- `check-updates`: `0 9 * * 1,3,5` (Mon/Wed/Fri 09:00)
 - `cleanup`: `0 9 * * 2,5` (Tue/Fri 09:00)
 
-Both can also be triggered on demand from Telegram with `/run_check_updates` and `/run_cleanup`.
+It can also be triggered on demand from Telegram with `/run_cleanup`. Image update checks now come
+from the automation-hub dependency report (Renovate, including `homelab`), not from a workflow here.
 
 ## 🗺️ Roadmap: CI, other languages
 
