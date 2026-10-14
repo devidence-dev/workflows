@@ -1,0 +1,7 @@
+# graphify: local cache and configuration, not useful to other clones
+graphify-out/cache/
+graphify-out/.graphify_root
+graphify-out/.graphify_python
+
+# graphify: dated backups of curated labels, redundant with Git history
+graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
