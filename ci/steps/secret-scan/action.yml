@@ -1,0 +1,19 @@
+name: "Secret scan"
+description: "Scans the full git history for hardcoded secrets with Betterleaks. Needs a checkout with fetch-depth: 0. Language-agnostic, shared by every ci-<lang>.yml."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Betterleaks
+      # docker:// so Renovate can bump the tag+digest like any other pinned action.
+      uses: docker://ghcr.io/betterleaks/betterleaks:v1.9.0@sha256:e3b95b0db6c2735db17165c009b0ad6d9cef34fb4578659232b98f69d7346cac
+      env:
+        # The published image doesn't trust the mounted workspace (owned by the runner user), so
+        # git refuses it with "dubious ownership" and the scan aborts (exit 1, but the log says
+        # "no leaks found in partial scan" — misleading).
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+      with:
+        # --redact: CI logs are public on most of this org's repos.
+        args: git --no-banner --redact --verbose /github/workspace

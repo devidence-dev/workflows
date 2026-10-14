@@ -30,7 +30,8 @@ on:
         default: true
 
 jobs:
-  # Each job below is independent and runs in parallel — none `needs:` another.
+  # Each job below is independent and runs in parallel — none `needs:` another. `ci-ok` is the
+  # exception (it only aggregates results).
 
   lint:
     name: 🧹 Lint
@@ -83,3 +84,27 @@ jobs:
         with:
           bun-version: ${{ inputs.bun_version }}
       - uses: devidence-dev/workflows/ci/node/steps/build@v1
+
+  secrets:
+    name: 🔑 Betterleaks
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history: a secret removed in a later commit is still leaked
+      - uses: devidence-dev/workflows/ci/steps/secret-scan@v1
+
+  ci-ok:
+    name: ✅ CI OK
+    # The only check a repo's ruleset requires — adding a job above never means editing every
+    # repo's ruleset, just this `needs:` list. always(): without it a failed dependency makes this
+    # job "skipped", and a skipped required check counts as passing.
+    if: always()
+    needs: [lint, check, test, build, secrets]
+    runs-on: ubuntu-26.04
+    permissions: {}
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

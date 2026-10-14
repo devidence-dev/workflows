@@ -51,16 +51,17 @@ flowchart LR
 | `.github/workflows/cd-build-deploy-semver.yml` | Reusable workflow (`workflow_call`) | version → build & push → deploy pipeline for semver-versioned apps |
 | `.github/workflows/cd-build-deploy-manual-version.yml` | Reusable workflow (`workflow_call`) | build & push → deploy pipeline for apps with a manual version input (no semver, no git tags) |
 | `.github/workflows/release.yml` | Workflow (`workflow_dispatch`) | Tags a new release of *this* repo (see Versioning) |
-| `.github/workflows/ci-actionlint.yml` | Workflow (`push`/`pull_request`) | Lints every workflow file here with [`actionlint`](https://github.com/rhysd/actionlint) |
-| `.github/workflows/ci-go.yml` | Reusable workflow (`workflow_call`) | Standard Go CI: tidy-check, vet, lint, test, govulncheck, build, Sonar — one independent job each |
-| `.github/workflows/ci-node.yml` | Reusable workflow (`workflow_call`) | Node CI: lint, type-check, test, build — each toggleable, since Node repos here vary more than Go ones |
-| `.github/workflows/ci-python.yml` | Reusable workflow (`workflow_call`) | Python CI: ruff (lint+format, blocking), pytest, Sonar |
+| `.github/workflows/ci-actionlint.yml` | Workflow (`push`/`pull_request`) | Lints every workflow file here with [`actionlint`](https://github.com/rhysd/actionlint), and scans this repo's full git history for secrets with Betterleaks |
+| `.github/workflows/ci-go.yml` | Reusable workflow (`workflow_call`) | Standard Go CI: tidy-check, vet, lint, test, govulncheck, build, Sonar, Betterleaks — one independent job each, plus the `ci-ok` gate |
+| `.github/workflows/ci-node.yml` | Reusable workflow (`workflow_call`) | Node CI: lint, type-check, test, build — each toggleable, since Node repos here vary more than Go ones — plus Betterleaks and the `ci-ok` gate |
+| `.github/workflows/ci-python.yml` | Reusable workflow (`workflow_call`) | Python CI: ruff (lint+format, blocking), pytest, Sonar, Betterleaks, plus the `ci-ok` gate |
 | `cd/steps/ghcr-login/` | Composite action | Fetches `GHCR_TOKEN` from Infisical (OIDC) and logs Docker into `ghcr.io` |
 | `cd/steps/homelab-deploy/` | Composite action | Clones `homelab`, updates `tag`/`digest` in the app's `values.yaml`, commits+pushes if there's a real change — shared by both `cd-*.yml` workflows |
 | `ci/go/steps/{setup,tidy-check,vet,lint,test,vulncheck,build}/` | Composite actions | Building blocks of `ci-go.yml` — independent and idempotent, each assumes `setup` already ran in the same job |
 | `ci/node/steps/{setup,lint,check,test,build}/` | Composite actions | Building blocks of `ci-node.yml` — each just runs the repo's own `bun run <script>` |
 | `ci/python/steps/{setup,ruff,test}/` | Composite actions | Building blocks of `ci-python.yml` |
 | `ci/steps/sonar-scan/` | Composite action | Fetches `SONAR_TOKEN` from Infisical and runs the SonarCloud scan, blocking on the Quality Gate — language-agnostic, shared by every `ci-<lang>.yml` |
+| `ci/steps/secret-scan/` | Composite action | Runs Betterleaks over the full git history, redacted output — language-agnostic, shared by every `ci-<lang>.yml` |
 | `.github/workflows/ops-github-runner-build-and-deploy.yml` | Workflow (`workflow_dispatch`) | Builds and deploys the `devidence-dev/github-runner` image — see [Host-ops](#-host-ops-github-runner) |
 | `.github/workflows/ops-github-runner-cleanup.yml` | Workflow (`workflow_dispatch` only, scheduled by automation-hub) | Prunes unused Docker/containerd images on the runner host — see [Host-ops](#-host-ops-github-runner) |
 
@@ -194,10 +195,13 @@ flowchart TB
         VU[🔒 vulncheck]
         B[🏗️ build]
         S[📊 sonar]
+        SE[🔑 secrets]
     end
+    OK[✅ ci-ok]
     Setup(("setup<br/>(each job runs<br/>its own checkout+setup)"))
     Setup -.-> T & V & L & TE & VU & B & S
     TE -. "coverage.out<br/>(re-run, not shared —<br/>idempotent)" .-> S
+    T & V & L & TE & VU & B & S & SE --> OK
 ```
 
 - `tidy-check` — `go mod verify` + a `go mod tidy` drift check.
@@ -214,9 +218,16 @@ flowchart TB
   needed between jobs), then `ci/steps/sonar-scan`. **Now always blocks on the Quality Gate** —
   one of the two repos already enforced this, the other only uploaded the analysis; standardized
   on enforcing it.
+- `secrets` — Betterleaks over the full git history (`fetch-depth: 0`), `--redact` because CI logs
+  are public. Chosen over Gitleaks: same author, Gitleaks' feature development moved to Betterleaks,
+  and `gitleaks-action` needs a paid-tier license key for organizations.
+- `ci-ok` — gate job, `needs:` every other job with `if: always()`, fails if any of them failed or
+  was cancelled. It's the **only** check a repo's ruleset has to require (`🧪 CI / ✅ CI OK`) — adding
+  a job here never means editing every repo's ruleset. Without `always()` a failed dependency would
+  mark it `skipped`, and a skipped required check counts as passing.
 
-Each of the seven jobs does its own `checkout` + `ci/go/steps/setup` — no job depends on another's
-output. A failure in `lint` doesn't hide whether `test` or `vulncheck` passed.
+Each check job does its own `checkout` (+ `ci/go/steps/setup`, except `secrets`) — no check job
+depends on another's output. A failure in `lint` doesn't hide whether `test` or `vulncheck` passed.
 
 ## 🖥️ Host-ops: github-runner
 
@@ -240,6 +251,24 @@ which sends `workflow_dispatch` on a cron in America/Guayaquil:
 
 It can also be triggered on demand from Telegram with `/run_cleanup`. Image update checks now come
 from the automation-hub dependency report (Renovate, including `homelab`), not from a workflow here.
+
+## 🔐 Branch protection & secrets
+
+- **Work flow:** short-lived branch → PR to `main` → CI → merge. `main` triggers deploy, so a red CI
+  never reaches production.
+- **Per-repo ruleset** on the default branch: require a pull request with **0** approvals (solo
+  maintainer — GitHub won't let you approve your own PR), require status check `🧪 CI / ✅ CI OK`
+  (callers name their job `🧪 CI`; the check is `<caller job name> / <job name>`), block force
+  pushes, restrict deletions, no admin bypass.
+- **Plan limits** (GitHub Free org): rulesets and secret-scanning push protection only enforce on
+  **public** repos. Private repos get the Betterleaks CI job and a local pre-commit hook only —
+  branch flow there is discipline, not enforced.
+- **A leaked secret** pushed to any branch of a public repo is exposed immediately (PRs can't be
+  deleted, commits stay reachable by SHA, the public event feed is scraped). **Revoke first**, then
+  close the PR / delete the branch. Short-lived branches only make the cleanup easy (no rewriting
+  `main`).
+- **False positives:** add the `betterleaks` fingerprint to `.betterleaksignore` in the affected
+  repo, only after confirming it's not a real secret (or after rotating it).
 
 ## 🗺️ Roadmap: CI, other languages
 
