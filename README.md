@@ -52,7 +52,7 @@ flowchart LR
 | `.github/workflows/cd-build-deploy-manual-version.yml` | Reusable workflow (`workflow_call`) | build & push → deploy pipeline for apps with a manual version input (no semver, no git tags) |
 | `.github/workflows/release.yml` | Workflow (`workflow_dispatch`) | Tags a new release of *this* repo (see Versioning) |
 | `.github/workflows/ci-actionlint.yml` | Workflow (`push`/`pull_request`) | Lints every workflow file here with [`actionlint`](https://github.com/rhysd/actionlint), and scans this repo's full git history for secrets with Betterleaks |
-| `.github/workflows/ci-go.yml` | Reusable workflow (`workflow_call`) | Standard Go CI: tidy-check, vet, lint, test, govulncheck, build, Sonar, Betterleaks — one independent job each, plus the `ci-ok` gate |
+| `.github/workflows/ci-go.yml` | Reusable workflow (`workflow_call`) | Standard Go CI: tidy-check, gofmt, vet, lint, test, gocognit, govulncheck, build, Sonar, Betterleaks — one independent job each, plus the `ci-ok` gate |
 | `.github/workflows/ci-node.yml` | Reusable workflow (`workflow_call`) | Node CI: lint, type-check, test, build — each toggleable, since Node repos here vary more than Go ones — plus Betterleaks and the `ci-ok` gate |
 | `.github/workflows/ci-python.yml` | Reusable workflow (`workflow_call`) | Python CI: ruff (lint+format, blocking), pytest, Sonar, Betterleaks, plus the `ci-ok` gate |
 | `cd/steps/ghcr-login/` | Composite action | Fetches `GHCR_TOKEN` from Infisical (OIDC) and logs Docker into `ghcr.io` |
@@ -196,12 +196,14 @@ flowchart TB
         B[🏗️ build]
         S[📊 sonar]
         SE[🔑 secrets]
+        GF[🎨 gofmt]
+        GC[🧠 gocognit]
     end
     OK[✅ ci-ok]
     Setup(("setup<br/>(each job runs<br/>its own checkout+setup)"))
-    Setup -.-> T & V & L & TE & VU & B & S
+    Setup -.-> T & V & L & TE & VU & B & S & GF & GC
     TE -. "coverage.out<br/>(re-run, not shared —<br/>idempotent)" .-> S
-    T & V & L & TE & VU & B & S & SE --> OK
+    T & V & L & TE & VU & B & S & SE & GF & GC --> OK
 ```
 
 - `tidy-check` — `go mod verify` + a `go mod tidy` drift check.
@@ -221,6 +223,9 @@ flowchart TB
 - `secrets` — Betterleaks over the full git history (`fetch-depth: 0`), `--redact` because CI logs
   are public. Chosen over Gitleaks: same author, Gitleaks' feature development moved to Betterleaks,
   and `gitleaks-action` needs a paid-tier license key for organizations.
+- `gofmt` — `gofmt -l .` must list nothing (the same check as `gate go --gofmt`).
+- `gocognit` — no function above cognitive complexity 15, tests included; `_templ.go` files are
+  skipped. Same pinned version and threshold as dev-gate's local `gate`.
 - `ci-ok` — gate job, `needs:` every other job with `if: always()`, fails if any of them failed or
   was cancelled. It's the **only** check a repo's ruleset has to require (`🧪 CI / ✅ CI OK`) — adding
   a job here never means editing every repo's ruleset. Without `always()` a failed dependency would
@@ -228,6 +233,13 @@ flowchart TB
 
 Each check job does its own `checkout` (+ `ci/go/steps/setup`, except `secrets`) — no check job
 depends on another's output. A failure in `lint` doesn't hide whether `test` or `vulncheck` passed.
+
+Coverage has no minimum in CI on purpose: the Sonar Quality Gate enforces it (and applies
+`sonar.coverage.exclusions` natively), while the local `gate` also enforces an overall minimum.
+
+**Breaking change:** `gofmt` and `gocognit` are new always-on checks, so callers with unformatted
+code or functions above cognitive complexity 15 start failing `ci-ok`. It is released with
+`bump: major` (→ `v2`); callers stay on `@v1` until they pass and then move to `@v2`.
 
 ## 🖥️ Host-ops: github-runner
 

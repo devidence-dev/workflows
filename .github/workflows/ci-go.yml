@@ -143,13 +143,62 @@ jobs:
           fetch-depth: 0 # full history: a secret removed in a later commit is still leaked
       - uses: devidence-dev/workflows/ci/steps/secret-scan@v1
 
+  gofmt:
+    name: 🎨 gofmt
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+      - name: gofmt -l
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            echo "::error::gofmt lists the files above — run gofmt -w (or gate go --fix --gofmt) and commit."
+            exit 1
+          fi
+
+  gocognit:
+    name: 🧠 gocognit
+    runs-on: ubuntu-26.04
+    # Pin and threshold must match dev-gate's `gate` (GOCOGNIT_PKG, GATE_COGNIT_MAX,
+    # GATE_COGNIT_IGNORE) — https://github.com/devidence-dev/dev-gate. Change both together.
+    env:
+      GOCOGNIT_PKG: github.com/uudashr/gocognit/cmd/gocognit@v1.2.0
+      COGNIT_MAX: "15"
+      COGNIT_IGNORE: '_templ\.go$'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+      - name: gocognit
+        run: |
+          status=0
+          findings="$(go run "$GOCOGNIT_PKG" -test -over "$COGNIT_MAX" -ignore "$COGNIT_IGNORE" .)" || status=$?
+          if [ -n "$findings" ]; then
+            echo "$findings"
+            echo "::error::functions above cognitive complexity ${COGNIT_MAX}"
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::gocognit did not run (exit $status)"
+            exit 1
+          fi
+
   ci-ok:
     name: ✅ CI OK
     # The only check a repo's ruleset requires — adding a job above never means editing every
     # repo's ruleset, just this `needs:` list. always(): without it a failed dependency makes this
     # job "skipped", and a skipped required check counts as passing.
     if: always()
-    needs: [tidy-check, vet, lint, test, vulncheck, build, sonar, secrets]
+    needs: [tidy-check, vet, lint, test, vulncheck, build, sonar, secrets, gofmt, gocognit]
     runs-on: ubuntu-26.04
     permissions: {}
     steps:
