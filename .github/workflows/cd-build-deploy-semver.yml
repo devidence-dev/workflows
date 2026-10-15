@@ -150,7 +150,7 @@ jobs:
         # Not a local ./path: this job checks out the caller app's repo (e.g. automation-hub),
         # not this workflows repo, so the composite action must be fetched by full reference.
         # Pinned to the same tag as this workflow itself — bump both together.
-        uses: devidence-dev/workflows/cd/steps/ghcr-login@v1
+        uses: devidence-dev/workflows/cd/steps/ghcr-login@v2
 
       - name: Build image
         env:
@@ -225,7 +225,7 @@ jobs:
       contents: read
     steps:
       - name: Bump homelab
-        uses: devidence-dev/workflows/cd/steps/homelab-deploy@v1
+        uses: devidence-dev/workflows/cd/steps/homelab-deploy@v2
         with:
           homelab_deploy_token: ${{ secrets.HOMELAB_DEPLOY_TOKEN }}
           tag: ${{ needs.version.outputs.tag }}
@@ -256,7 +256,7 @@ jobs:
           export-type: "env"
 
       - name: Bump homelab
-        uses: devidence-dev/workflows/cd/steps/homelab-deploy@v1
+        uses: devidence-dev/workflows/cd/steps/homelab-deploy@v2
         with:
           homelab_deploy_token: ${{ env.HOMELAB_DEPLOY_TOKEN }}
           tag: ${{ needs.version.outputs.tag }}

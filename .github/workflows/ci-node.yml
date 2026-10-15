@@ -41,10 +41,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/node/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/node/steps/setup@v2
         with:
           bun-version: ${{ inputs.bun_version }}
-      - uses: devidence-dev/workflows/ci/node/steps/lint@v1
+      - uses: devidence-dev/workflows/ci/node/steps/lint@v2
 
   check:
     name: 🔍 Type-check
@@ -54,10 +54,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/node/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/node/steps/setup@v2
         with:
           bun-version: ${{ inputs.bun_version }}
-      - uses: devidence-dev/workflows/ci/node/steps/check@v1
+      - uses: devidence-dev/workflows/ci/node/steps/check@v2
 
   test:
     name: 🧪 Test
@@ -67,10 +67,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/node/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/node/steps/setup@v2
         with:
           bun-version: ${{ inputs.bun_version }}
-      - uses: devidence-dev/workflows/ci/node/steps/test@v1
+      - uses: devidence-dev/workflows/ci/node/steps/test@v2
 
   build:
     name: 🏗️ Build verification
@@ -80,10 +80,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/node/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/node/steps/setup@v2
         with:
           bun-version: ${{ inputs.bun_version }}
-      - uses: devidence-dev/workflows/ci/node/steps/build@v1
+      - uses: devidence-dev/workflows/ci/node/steps/build@v2
 
   secrets:
     name: 🔑 Betterleaks
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # full history: a secret removed in a later commit is still leaked
-      - uses: devidence-dev/workflows/ci/steps/secret-scan@v1
+      - uses: devidence-dev/workflows/ci/steps/secret-scan@v2
 
   ci-ok:
     name: ✅ CI OK

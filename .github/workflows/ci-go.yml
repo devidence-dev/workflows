@@ -44,10 +44,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v2
         with:
           go-version-file: ${{ inputs.go_version_file }}
-      - uses: devidence-dev/workflows/ci/go/steps/tidy-check@v1
+      - uses: devidence-dev/workflows/ci/go/steps/tidy-check@v2
 
   vet:
     name: 🔍 go vet
@@ -56,10 +56,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v2
         with:
           go-version-file: ${{ inputs.go_version_file }}
-      - uses: devidence-dev/workflows/ci/go/steps/vet@v1
+      - uses: devidence-dev/workflows/ci/go/steps/vet@v2
 
   lint:
     name: 🧹 golangci-lint
@@ -68,10 +68,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v2
         with:
           go-version-file: ${{ inputs.go_version_file }}
-      - uses: devidence-dev/workflows/ci/go/steps/lint@v1
+      - uses: devidence-dev/workflows/ci/go/steps/lint@v2
         with:
           args: ${{ inputs.lint_args }}
 
@@ -82,10 +82,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v2
         with:
           go-version-file: ${{ inputs.go_version_file }}
-      - uses: devidence-dev/workflows/ci/go/steps/test@v1
+      - uses: devidence-dev/workflows/ci/go/steps/test@v2
 
   vulncheck:
     name: 🔒 govulncheck
@@ -94,10 +94,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v2
         with:
           go-version-file: ${{ inputs.go_version_file }}
-      - uses: devidence-dev/workflows/ci/go/steps/vulncheck@v1
+      - uses: devidence-dev/workflows/ci/go/steps/vulncheck@v2
 
   build:
     name: 🏗️ Build verification
@@ -106,10 +106,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v2
         with:
           go-version-file: ${{ inputs.go_version_file }}
-      - uses: devidence-dev/workflows/ci/go/steps/build@v1
+      - uses: devidence-dev/workflows/ci/go/steps/build@v2
         with:
           target: ${{ inputs.build_target }}
           output: ${{ inputs.build_output }}
@@ -126,11 +126,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # full history; otherwise Sonar warns about a shallow clone
-      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v2
         with:
           go-version-file: ${{ inputs.go_version_file }}
-      - uses: devidence-dev/workflows/ci/go/steps/test@v1
-      - uses: devidence-dev/workflows/ci/steps/sonar-scan@v1
+      - uses: devidence-dev/workflows/ci/go/steps/test@v2
+      - uses: devidence-dev/workflows/ci/steps/sonar-scan@v2
 
   secrets:
     name: 🔑 Betterleaks
@@ -141,7 +141,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # full history: a secret removed in a later commit is still leaked
-      - uses: devidence-dev/workflows/ci/steps/secret-scan@v1
+      - uses: devidence-dev/workflows/ci/steps/secret-scan@v2
 
   gofmt:
     name: 🎨 gofmt
@@ -150,7 +150,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v2
         with:
           go-version-file: ${{ inputs.go_version_file }}
       - name: gofmt -l
@@ -175,7 +175,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/go/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/go/steps/setup@v2
         with:
           go-version-file: ${{ inputs.go_version_file }}
       - name: gocognit

@@ -25,10 +25,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/python/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/python/steps/setup@v2
         with:
           python-version: ${{ inputs.python_version }}
-      - uses: devidence-dev/workflows/ci/python/steps/ruff@v1
+      - uses: devidence-dev/workflows/ci/python/steps/ruff@v2
 
   test:
     name: 🧪 pytest
@@ -37,10 +37,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: devidence-dev/workflows/ci/python/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/python/steps/setup@v2
         with:
           python-version: ${{ inputs.python_version }}
-      - uses: devidence-dev/workflows/ci/python/steps/test@v1
+      - uses: devidence-dev/workflows/ci/python/steps/test@v2
         with:
           coverage_source: ${{ inputs.coverage_source }}
 
@@ -54,13 +54,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # full history; otherwise Sonar warns about a shallow clone
-      - uses: devidence-dev/workflows/ci/python/steps/setup@v1
+      - uses: devidence-dev/workflows/ci/python/steps/setup@v2
         with:
           python-version: ${{ inputs.python_version }}
-      - uses: devidence-dev/workflows/ci/python/steps/test@v1
+      - uses: devidence-dev/workflows/ci/python/steps/test@v2
         with:
           coverage_source: ${{ inputs.coverage_source }}
-      - uses: devidence-dev/workflows/ci/steps/sonar-scan@v1
+      - uses: devidence-dev/workflows/ci/steps/sonar-scan@v2
 
   secrets:
     name: 🔑 Betterleaks
@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # full history: a secret removed in a later commit is still leaked
-      - uses: devidence-dev/workflows/ci/steps/secret-scan@v1
+      - uses: devidence-dev/workflows/ci/steps/secret-scan@v2
 
   ci-ok:
     name: ✅ CI OK
