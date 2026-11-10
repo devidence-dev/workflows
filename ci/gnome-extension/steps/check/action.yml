@@ -1,0 +1,9 @@
+name: "GNOME extension check"
+description: "Runs the repo's own check script (npm run check)"
+
+runs:
+  using: "composite"
+  steps:
+    - name: npm run check
+      shell: bash
+      run: npm run check

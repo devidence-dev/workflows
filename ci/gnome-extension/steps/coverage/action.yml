@@ -1,0 +1,9 @@
+name: "GNOME extension coverage"
+description: "Runs the repo's own coverage script (npm run coverage); it must write the lcov file that sonar-project.properties points to"
+
+runs:
+  using: "composite"
+  steps:
+    - name: npm run coverage
+      shell: bash
+      run: npm run coverage

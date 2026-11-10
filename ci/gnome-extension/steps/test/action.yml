@@ -1,0 +1,9 @@
+name: "GNOME extension test"
+description: "Runs the repo's own tests (npm test)"
+
+runs:
+  using: "composite"
+  steps:
+    - name: npm test
+      shell: bash
+      run: npm test

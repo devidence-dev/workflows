@@ -1,0 +1,9 @@
+name: "GNOME extension lint"
+description: "Runs the repo's own lint script (npm run lint)"
+
+runs:
+  using: "composite"
+  steps:
+    - name: npm run lint
+      shell: bash
+      run: npm run lint

@@ -1,0 +1,24 @@
+name: "GNOME extension setup"
+description: "Sets up Node.js and installs dependencies with npm ci when the repo has a package-lock.json"
+
+inputs:
+  node-version:
+    description: "Node.js version to install (default: 24)"
+    required: false
+    default: "24"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install dependencies
+      shell: bash
+      # No lockfile means no dependencies to install (a repo may have none at all).
+      run: |
+        if [ -f package-lock.json ]; then
+          npm ci
+        fi

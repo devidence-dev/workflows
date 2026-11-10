@@ -1,0 +1,150 @@
+name: 🧪 Reusable — GNOME Extension CI
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: "Node.js version to install."
+        required: false
+        type: string
+        default: "24"
+      run_lint:
+        description: "Run npm run lint (Biome). Disable to skip this job."
+        required: false
+        type: boolean
+        default: true
+      run_check:
+        description: "Run npm run check. Disable to skip this job."
+        required: false
+        type: boolean
+        default: true
+      run_glsl:
+        description: "Run npm run glsl (needs glslang-tools, installed by the step). Disable to skip this job."
+        required: false
+        type: boolean
+        default: true
+      run_test:
+        description: "Run npm test. Disable to skip this job."
+        required: false
+        type: boolean
+        default: true
+      run_pack:
+        description: "Run npm run pack, then check that dist/*.shell-extension.zip exists. Disable to skip this job."
+        required: false
+        type: boolean
+        default: true
+      run_sonar:
+        description: "Run npm run coverage and the SonarCloud scan (needs sonar-project.properties). Disable to skip this job."
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  # Each job below is independent and runs in parallel — none `needs:` another. `ci-ok` is the
+  # exception (it only aggregates results).
+
+  lint:
+    name: 🧹 Biome
+    if: inputs.run_lint
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/setup@v2
+        with:
+          node-version: ${{ inputs.node_version }}
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/lint@v2
+
+  check:
+    name: 🔍 Check
+    if: inputs.run_check
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/setup@v2
+        with:
+          node-version: ${{ inputs.node_version }}
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/check@v2
+
+  glsl:
+    name: 🎨 GLSL
+    if: inputs.run_glsl
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/setup@v2
+        with:
+          node-version: ${{ inputs.node_version }}
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/glsl@v2
+
+  test:
+    name: 🧪 Test
+    if: inputs.run_test
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/setup@v2
+        with:
+          node-version: ${{ inputs.node_version }}
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/test@v2
+
+  pack:
+    name: 📦 Pack
+    if: inputs.run_pack
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/setup@v2
+        with:
+          node-version: ${{ inputs.node_version }}
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/pack@v2
+
+  sonar:
+    name: 📊 SonarCloud
+    if: inputs.run_sonar
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      id-token: write # required to request an OIDC token for Infisical
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history; otherwise Sonar warns about a shallow clone
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/setup@v2
+        with:
+          node-version: ${{ inputs.node_version }}
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/coverage@v2
+      - uses: devidence-dev/workflows/ci/steps/sonar-scan@v2
+
+  secrets:
+    name: 🔑 Betterleaks
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history: a secret removed in a later commit is still leaked
+      - uses: devidence-dev/workflows/ci/steps/secret-scan@v2
+
+  ci-ok:
+    name: ✅ CI OK
+    # The only check a repo's ruleset requires — adding a job above never means editing every
+    # repo's ruleset, just this `needs:` list. always(): without it a failed dependency makes this
+    # job "skipped", and a skipped required check counts as passing.
+    if: always()
+    needs: [lint, check, glsl, test, pack, sonar, secrets]
+    runs-on: ubuntu-26.04
+    permissions: {}
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
