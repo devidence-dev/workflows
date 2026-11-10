@@ -3,6 +3,20 @@ name: 🚀 Reusable — GNOME Extension Release
 on:
   workflow_call:
     inputs:
+      bump:
+        description: "How to increment the version: patch | minor | major (ignored when custom_tag is set)."
+        required: true
+        type: string
+      custom_tag:
+        description: "Custom tag (e.g. v1.2.3). Overrides the automatic version bump when set."
+        required: false
+        type: string
+        default: ""
+      prerelease:
+        description: "Mark the GitHub Release as a prerelease?"
+        required: false
+        type: boolean
+        default: false
       node_version:
         description: "Node.js version to install."
         required: false
@@ -35,10 +49,74 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # all tags, to calculate the next version
+
+      - name: Calculate version
+        id: semver
+        env:
+          BUMP: ${{ inputs.bump }}
+          CUSTOM_TAG: ${{ inputs.custom_tag }}
+        run: |
+          case "$BUMP" in
+            patch|minor|major) ;;
+            *) echo "::error::bump must be patch, minor or major (got '$BUMP')"; exit 1 ;;
+          esac
+
+          if [ -n "$CUSTOM_TAG" ]; then
+            if ! [[ "$CUSTOM_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::custom_tag '$CUSTOM_TAG' must match vX.Y.Z"
+              exit 1
+            fi
+            TAG="$CUSTOM_TAG"
+          else
+            LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+            [ -z "$LATEST" ] && LATEST="v0.0.0"
+
+            MAJOR=$(echo "$LATEST" | cut -d. -f1 | tr -d 'v')
+            MINOR=$(echo "$LATEST" | cut -d. -f2)
+            PATCH=$(echo "$LATEST" | cut -d. -f3)
+
+            case "$BUMP" in
+              major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH+1)) ;;
+            esac
+
+            TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null \
+            || [ -n "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
+            echo "::error::tag $TAG already exists"
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Next version: $TAG"
+
       - uses: devidence-dev/workflows/ci/gnome-extension/steps/setup@v2
         with:
           node-version: ${{ inputs.node_version }}
+
+      # Workspace only: the stamped files are packed into the zip but never committed.
+      - name: Stamp the version
+        env:
+          VERSION: ${{ steps.semver.outputs.version }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            for (const [file, key] of [["metadata.json", "version-name"], ["package.json", "version"]]) {
+              const json = JSON.parse(fs.readFileSync(file, "utf8"));
+              json[key] = process.env.VERSION;
+              fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
+            }
+          '
+
       - uses: devidence-dev/workflows/ci/gnome-extension/steps/pack@v2
       - uses: devidence-dev/workflows/ci/gnome-extension/steps/release@v2
         with:
           token: ${{ github.token }}
+          tag: ${{ steps.semver.outputs.tag }}
+          prerelease: ${{ inputs.prerelease }}

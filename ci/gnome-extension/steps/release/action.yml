@@ -1,40 +1,27 @@
 name: "GNOME extension release"
-description: "Creates a GitHub Release v<version-name> from metadata.json with dist/*.shell-extension.zip attached; fails on a malformed version or an existing tag"
+description: "Creates a GitHub Release for the given tag with dist/*.shell-extension.zip attached; the caller has already validated the tag and checked it is new"
 
 inputs:
   token:
     description: "GitHub token with contents: write (pass `${{ github.token }}`; composite actions cannot default to it)"
     required: true
+  tag:
+    description: "Release tag (vX.Y.Z), created by the release at the current commit"
+    required: true
+  prerelease:
+    description: "Mark the release as a prerelease (true/false)"
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
   steps:
-    - name: Resolve the version
-      id: version
-      shell: bash
-      run: |
-        version=$(node -p "require('./metadata.json')['version-name']")
-        if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          echo "::error::metadata.json version-name '$version' is not X.Y.Z"
-          exit 1
-        fi
-        echo "version=$version" >> "$GITHUB_OUTPUT"
-
-    - name: Refuse an existing tag
-      shell: bash
-      env:
-        VERSION: ${{ steps.version.outputs.version }}
-      run: |
-        if [ -n "$(git ls-remote --tags origin "refs/tags/v$VERSION")" ]; then
-          echo "::error::tag v$VERSION already exists; bump version-name in metadata.json"
-          exit 1
-        fi
-
     - name: Create the release
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
-        VERSION: ${{ steps.version.outputs.version }}
+        TAG: ${{ inputs.tag }}
+        PRERELEASE: ${{ inputs.prerelease }}
       run: |
         shopt -s nullglob
         zips=(dist/*.shell-extension.zip)
@@ -42,4 +29,6 @@ runs:
           echo "::error::expected exactly one dist/*.shell-extension.zip, found ${#zips[@]}"
           exit 1
         fi
-        gh release create "v$VERSION" "${zips[0]}" --title "v$VERSION" --generate-notes --target "$GITHUB_SHA"
+        args=()
+        [ "$PRERELEASE" = "true" ] && args+=(--prerelease)
+        gh release create "$TAG" "${zips[0]}" --title "$TAG" --generate-notes --target "$GITHUB_SHA" "${args[@]}"

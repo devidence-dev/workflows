@@ -63,7 +63,7 @@ flowchart LR
 | `ci/node/steps/{setup,lint,check,test,build}/` | Composite actions | Building blocks of `ci-node.yml` — each just runs the repo's own `bun run <script>` |
 | `ci/python/steps/{setup,ruff,test}/` | Composite actions | Building blocks of `ci-python.yml` |
 | `ci/gnome-extension/steps/{setup,lint,check,glsl,test,coverage,pack}/` | Composite actions | Building blocks of `ci-gnome-extension.yml` — each just runs the repo's own `npm run <script>` |
-| `ci/gnome-extension/steps/release/` | Composite action | Creates a GitHub Release `v<version-name>` (from `metadata.json`) with the packed extension zip attached; refuses a malformed version or an existing tag |
+| `ci/gnome-extension/steps/release/` | Composite action | Creates a GitHub Release for the given `tag` (optionally a prerelease) with the packed extension zip attached |
 | `ci/steps/sonar-scan/` | Composite action | Fetches `SONAR_TOKEN` from Infisical and runs the SonarCloud scan, blocking on the Quality Gate — language-agnostic, shared by every `ci-<lang>.yml` |
 | `ci/steps/secret-scan/` | Composite action | Runs Betterleaks over the full git history, redacted output — language-agnostic, shared by every `ci-<lang>.yml` |
 | `.github/workflows/ops-github-runner-build-and-deploy.yml` | Workflow (`workflow_dispatch`) | Builds and deploys the `devidence-dev/github-runner` image — see [Host-ops](#-host-ops-github-runner) |
@@ -298,33 +298,72 @@ existing major (`v2`).
 Publishes a GitHub Release with the installable zip attached (first adopter: `mirx`). Two jobs:
 
 - `verify` — setup, then `lint`, `glsl`, `test` and `check`, in sequence.
-- `release` — `needs: verify`; setup, `pack`, then `ci/gnome-extension/steps/release`, which runs
-  `gh release create v<version> <zip> --generate-notes --target $GITHUB_SHA`. It needs
-  `contents: write`.
+- `release` — `needs: verify`; checks out with `fetch-depth: 0`, calculates the version, sets up
+  Node, stamps the version, runs `pack`, then `ci/gnome-extension/steps/release`, which runs
+  `gh release create <tag> <zip> --title <tag> --generate-notes --target $GITHUB_SHA`
+  (plus `--prerelease` when requested). It needs `contents: write`.
 
-The **version source of truth** is `version-name` in the extension's `metadata.json`; it must be
-`X.Y.Z`. The `release` job runs only from the repo's **default branch** (it shows as `Skipped`
-elsewhere) and **refuses an existing tag** — bump `version-name` before releasing again.
+The **version source of truth is the git tag**, as in the deploy workflows: the next `vX.Y.Z` is
+the latest `vX.Y.Z` tag plus `bump` (`v0.0.0` when there is none), or `custom_tag` when set
+(it must match `vX.Y.Z`). The release **refuses an existing tag** (local or on origin). Before
+`pack`, the job stamps the version (without `v`) into `metadata.json` `version-name` and
+`package.json` `version` in the **job workspace only** — nothing is committed, so the files in the
+repo are just the last released or dev value. The `release` job runs only from the repo's
+**default branch** (it shows as `Skipped` elsewhere).
 
-Input: `node_version` (default `"24"`).
+Inputs:
+
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `bump` | string, **required** | — | `patch`, `minor` or `major`; validated, ignored when `custom_tag` is set |
+| `custom_tag` | string | `""` | Custom tag (e.g. `v1.2.3`); overrides the automatic bump |
+| `prerelease` | boolean | `false` | Mark the GitHub Release as a prerelease |
+| `node_version` | string | `"24"` | Node.js version |
 
 Caller (`.github/workflows/release.yml` in the extension repo):
 
 ```yaml
 name: 🚀 Release
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "How to increment the version (ignored when custom_tag is set)."
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      custom_tag:
+        description: "Custom tag (e.g. v1.2.3). Overrides the automatic version bump when set."
+        required: false
+        type: string
+      prerelease:
+        description: "Mark as a prerelease?"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   release:
     name: 🚀 Release
     uses: devidence-dev/workflows/.github/workflows/release-gnome-extension.yml@v2
+    with:
+      bump: ${{ inputs.bump }}
+      custom_tag: ${{ inputs.custom_tag }}
+      prerelease: ${{ inputs.prerelease }}
     permissions:
       contents: write
 ```
 
-This is a **new file** (no existing caller changes), so release it as a `minor` bump on the
-existing major (`v2`).
+This **changes the reusable workflow's inputs**: `bump` is now required, so a caller that does not
+pass it breaks. The only caller is `mirx`, which is updated together with this change. Release it
+as a `minor` bump: that keeps callers on `@v2`, treating it as compatible because the one caller
+changes at the same time. A `major` bump would be the stricter choice (callers would have to move
+to `@v3`).
 
 ## 🖥️ Host-ops: github-runner
 
