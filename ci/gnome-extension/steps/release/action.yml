@@ -3,7 +3,7 @@ description: "Creates a GitHub Release for the given tag with dist/*.shell-exten
 
 inputs:
   token:
-    description: "GitHub token with contents: write (pass `${{ github.token }}`; composite actions cannot default to it)"
+    description: "GitHub token with contents: write, supplied by the calling workflow"
     required: true
   tag:
     description: "Release tag (vX.Y.Z), created by the release at the current commit"
