@@ -1,0 +1,44 @@
+name: 🚀 Reusable — GNOME Extension Release
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: "Node.js version to install."
+        required: false
+        type: string
+        default: "24"
+
+jobs:
+  verify:
+    name: ✅ Verify
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/setup@v2
+        with:
+          node-version: ${{ inputs.node_version }}
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/lint@v2
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/glsl@v2
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/test@v2
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/check@v2
+
+  release:
+    name: 🚀 Release
+    needs: verify
+    # Only the default branch may release.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/setup@v2
+        with:
+          node-version: ${{ inputs.node_version }}
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/pack@v2
+      - uses: devidence-dev/workflows/ci/gnome-extension/steps/release@v2
+        with:
+          token: ${{ github.token }}

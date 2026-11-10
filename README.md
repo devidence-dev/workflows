@@ -58,10 +58,12 @@ flowchart LR
 | `cd/steps/ghcr-login/` | Composite action | Fetches `GHCR_TOKEN` from Infisical (OIDC) and logs Docker into `ghcr.io` |
 | `cd/steps/homelab-deploy/` | Composite action | Clones `homelab`, updates `tag`/`digest` in the app's `values.yaml`, commits+pushes if there's a real change — shared by both `cd-*.yml` workflows |
 | `.github/workflows/ci-gnome-extension.yml` | Reusable workflow (`workflow_call`) | GNOME Shell extension CI: Biome, check, GLSL validation, test, pack, Sonar, Betterleaks, plus the `ci-ok` gate — see [GNOME extension CI](#-gnome-extension-ci-ci-gnome-extensionyml) |
+| `.github/workflows/release-gnome-extension.yml` | Reusable workflow (`workflow_call`) | GNOME Shell extension release: verify (lint, GLSL, test, check), then pack and publish a GitHub Release — see [GNOME extension release](#-gnome-extension-release-release-gnome-extensionyml) |
 | `ci/go/steps/{setup,tidy-check,vet,lint,test,vulncheck,build}/` | Composite actions | Building blocks of `ci-go.yml` — independent and idempotent, each assumes `setup` already ran in the same job |
 | `ci/node/steps/{setup,lint,check,test,build}/` | Composite actions | Building blocks of `ci-node.yml` — each just runs the repo's own `bun run <script>` |
 | `ci/python/steps/{setup,ruff,test}/` | Composite actions | Building blocks of `ci-python.yml` |
 | `ci/gnome-extension/steps/{setup,lint,check,glsl,test,coverage,pack}/` | Composite actions | Building blocks of `ci-gnome-extension.yml` — each just runs the repo's own `npm run <script>` |
+| `ci/gnome-extension/steps/release/` | Composite action | Creates a GitHub Release `v<version-name>` (from `metadata.json`) with the packed extension zip attached; refuses a malformed version or an existing tag |
 | `ci/steps/sonar-scan/` | Composite action | Fetches `SONAR_TOKEN` from Infisical and runs the SonarCloud scan, blocking on the Quality Gate — language-agnostic, shared by every `ci-<lang>.yml` |
 | `ci/steps/secret-scan/` | Composite action | Runs Betterleaks over the full git history, redacted output — language-agnostic, shared by every `ci-<lang>.yml` |
 | `.github/workflows/ops-github-runner-build-and-deploy.yml` | Workflow (`workflow_dispatch`) | Builds and deploys the `devidence-dev/github-runner` image — see [Host-ops](#-host-ops-github-runner) |
@@ -286,6 +288,39 @@ jobs:
     permissions:
       contents: read
       id-token: write # Sonar job: OIDC token for Infisical
+```
+
+This is a **new file** (no existing caller changes), so release it as a `minor` bump on the
+existing major (`v2`).
+
+## 🚀 GNOME extension release: `release-gnome-extension.yml`
+
+Publishes a GitHub Release with the installable zip attached (first adopter: `mirx`). Two jobs:
+
+- `verify` — setup, then `lint`, `glsl`, `test` and `check`, in sequence.
+- `release` — `needs: verify`; setup, `pack`, then `ci/gnome-extension/steps/release`, which runs
+  `gh release create v<version> <zip> --generate-notes --target $GITHUB_SHA`. It needs
+  `contents: write`.
+
+The **version source of truth** is `version-name` in the extension's `metadata.json`; it must be
+`X.Y.Z`. The `release` job runs only from the repo's **default branch** (it shows as `Skipped`
+elsewhere) and **refuses an existing tag** — bump `version-name` before releasing again.
+
+Input: `node_version` (default `"24"`).
+
+Caller (`.github/workflows/release.yml` in the extension repo):
+
+```yaml
+name: 🚀 Release
+
+on: workflow_dispatch
+
+jobs:
+  release:
+    name: 🚀 Release
+    uses: devidence-dev/workflows/.github/workflows/release-gnome-extension.yml@v2
+    permissions:
+      contents: write
 ```
 
 This is a **new file** (no existing caller changes), so release it as a `minor` bump on the
