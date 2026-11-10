@@ -1,0 +1,19 @@
+name: "GNOME extension pack"
+description: "Runs the repo's own pack script (npm run pack) and fails if no dist/*.shell-extension.zip was produced"
+
+runs:
+  using: "composite"
+  steps:
+    - name: npm run pack
+      shell: bash
+      run: npm run pack
+
+    - name: Verify the extension zip exists
+      shell: bash
+      run: |
+        shopt -s nullglob
+        zips=(dist/*.shell-extension.zip)
+        if [ ${#zips[@]} -eq 0 ]; then
+          echo "::error::npm run pack produced no dist/*.shell-extension.zip"
+          exit 1
+        fi

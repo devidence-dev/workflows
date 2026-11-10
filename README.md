@@ -51,15 +51,17 @@ flowchart LR
 | `.github/workflows/cd-build-deploy-semver.yml` | Reusable workflow (`workflow_call`) | version → build & push → deploy pipeline for semver-versioned apps |
 | `.github/workflows/cd-build-deploy-manual-version.yml` | Reusable workflow (`workflow_call`) | build & push → deploy pipeline for apps with a manual version input (no semver, no git tags) |
 | `.github/workflows/release.yml` | Workflow (`workflow_dispatch`) | Tags a new release of *this* repo (see Versioning) |
-| `.github/workflows/ci-actionlint.yml` | Workflow (`push`/`pull_request`) | Lints every workflow file here with [`actionlint`](https://github.com/rhysd/actionlint), and scans this repo's full git history for secrets with Betterleaks |
+| `.github/workflows/ci-actionlint.yml` | Workflow (`push`/`pull_request`) | Lints every workflow file here with [`actionlint`](https://github.com/rhysd/actionlint) (the `ubuntu-26.04` runner label is declared in `.github/actionlint.yaml`, as it is newer than actionlint's built-in list), and scans this repo's full git history for secrets with Betterleaks |
 | `.github/workflows/ci-go.yml` | Reusable workflow (`workflow_call`) | Standard Go CI: tidy-check, gofmt, vet, lint, test, gocognit, govulncheck, build, Sonar, Betterleaks — one independent job each, plus the `ci-ok` gate |
 | `.github/workflows/ci-node.yml` | Reusable workflow (`workflow_call`) | Node CI: lint, type-check, test, build — each toggleable, since Node repos here vary more than Go ones — plus Betterleaks and the `ci-ok` gate |
 | `.github/workflows/ci-python.yml` | Reusable workflow (`workflow_call`) | Python CI: ruff (lint+format, blocking), pytest, Sonar, Betterleaks, plus the `ci-ok` gate |
 | `cd/steps/ghcr-login/` | Composite action | Fetches `GHCR_TOKEN` from Infisical (OIDC) and logs Docker into `ghcr.io` |
 | `cd/steps/homelab-deploy/` | Composite action | Clones `homelab`, updates `tag`/`digest` in the app's `values.yaml`, commits+pushes if there's a real change — shared by both `cd-*.yml` workflows |
+| `.github/workflows/ci-gnome-extension.yml` | Reusable workflow (`workflow_call`) | GNOME Shell extension CI: Biome, check, GLSL validation, test, pack, Sonar, Betterleaks, plus the `ci-ok` gate — see [GNOME extension CI](#-gnome-extension-ci-ci-gnome-extensionyml) |
 | `ci/go/steps/{setup,tidy-check,vet,lint,test,vulncheck,build}/` | Composite actions | Building blocks of `ci-go.yml` — independent and idempotent, each assumes `setup` already ran in the same job |
 | `ci/node/steps/{setup,lint,check,test,build}/` | Composite actions | Building blocks of `ci-node.yml` — each just runs the repo's own `bun run <script>` |
 | `ci/python/steps/{setup,ruff,test}/` | Composite actions | Building blocks of `ci-python.yml` |
+| `ci/gnome-extension/steps/{setup,lint,check,glsl,test,coverage,pack}/` | Composite actions | Building blocks of `ci-gnome-extension.yml` — each just runs the repo's own `npm run <script>` |
 | `ci/steps/sonar-scan/` | Composite action | Fetches `SONAR_TOKEN` from Infisical and runs the SonarCloud scan, blocking on the Quality Gate — language-agnostic, shared by every `ci-<lang>.yml` |
 | `ci/steps/secret-scan/` | Composite action | Runs Betterleaks over the full git history, redacted output — language-agnostic, shared by every `ci-<lang>.yml` |
 | `.github/workflows/ops-github-runner-build-and-deploy.yml` | Workflow (`workflow_dispatch`) | Builds and deploys the `devidence-dev/github-runner` image — see [Host-ops](#-host-ops-github-runner) |
@@ -240,6 +242,54 @@ Coverage has no minimum in CI on purpose: the Sonar Quality Gate enforces it (an
 **Breaking change:** `gofmt` and `gocognit` are new always-on checks, so callers with unformatted
 code or functions above cognitive complexity 15 start failing `ci-ok`. It is released with
 `bump: major` (→ `v2`); callers stay on `@v1` until they pass and then move to `@v2`.
+
+## 🧩 GNOME extension CI: `ci-gnome-extension.yml`
+
+CI for GNOME Shell extensions (first adopter: `mirx`). Every job is independent and runs in
+parallel, each with its own `checkout` + `ci/gnome-extension/steps/setup`:
+
+- `lint` — `npm run lint` (Biome: lint + format check).
+- `check` — `npm run check` (metadata, JS syntax, GSettings schema).
+- `glsl` — installs `glslang-tools`, then `npm run glsl` (validates the extension's GLSL shaders).
+- `test` — `npm test`.
+- `pack` — `npm run pack`, then fails if no `dist/*.shell-extension.zip` was produced.
+- `sonar` — `npm run coverage` (must write the lcov file `sonar-project.properties` points to),
+  then `ci/steps/sonar-scan`.
+- `secrets` — Betterleaks over the full git history, same as the other `ci-<lang>.yml`.
+- `ci-ok` — the same `always()` gate as the other workflows; the only check a ruleset requires
+  (`🧪 CI / ✅ CI OK`).
+
+Inputs: `node_version` (default `"24"`) and the boolean toggles `run_lint`, `run_check`,
+`run_glsl`, `run_test`, `run_pack`, `run_sonar` (all default `true`). A disabled job shows as
+`Skipped` and does not fail `ci-ok`.
+
+**Why not `ci-node.yml`:** these repos use npm/Node, not Bun (`npm ci` only when a
+`package-lock.json` exists — an extension may have no dependencies); there is no build step but a
+**pack** step that produces the extension zip; GLSL shaders get their own validation; and Sonar is
+on by default (`ci-node.yml` has no Sonar job). `ci-node.yml` is untouched.
+
+Caller (`.github/workflows/ci.yml` in the extension repo):
+
+```yaml
+name: 🧪 CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: 🧪 CI
+    uses: devidence-dev/workflows/.github/workflows/ci-gnome-extension.yml@v2
+    permissions:
+      contents: read
+      id-token: write # Sonar job: OIDC token for Infisical
+```
+
+This is a **new file** (no existing caller changes), so release it as a `minor` bump on the
+existing major (`v2`).
 
 ## 🖥️ Host-ops: github-runner
 
